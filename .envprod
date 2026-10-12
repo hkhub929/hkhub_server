@@ -1,0 +1,31 @@
+# Public production configuration. This file is committed to Git.
+# Shell-compatible syntax: quote values containing spaces or JSON.
+# Never put passwords, private keys, tokens or DATABASE_URL here.
+# GitHub Actions Secrets required: SERVER_SSH_KEY, DATABASE_URL.
+# Configure DEEPSEEK_API_KEY in GitHub Secrets to enable the education tool.
+
+# Deployment target: replace the host/user and paste a verified SSH known_hosts entry.
+SERVER_HOST=your-server-host
+SERVER_USER=your-server-user
+SERVER_SSH_PORT=22
+SERVER_SSH_KNOWN_HOSTS=''
+# API binds only to 127.0.0.1 on the host. Choose a port unused by other projects.
+API_HOST_PORT=8001
+SERVER_IMAGE_NAME=hkhub-server
+
+# API runtime (independent of local .env).
+APP_NAME='HK Hub API'
+VERSION=0.1.0
+ENVIRONMENT=production
+API_PREFIX=/api
+DEBUG=false
+LOG_LEVEL=INFO
+# Native mobile clients do not require CORS. Add actual web origins if needed.
+CORS_ORIGINS='[]'
+LOCAL_DATABASE_AUTOSTART=false
+DATABASE_POOL_SIZE=5
+DATABASE_MAX_OVERFLOW=10
+UPSTREAM_TIMEOUT_SECONDS=15
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_TIMEOUT_SECONDS=150

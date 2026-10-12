@@ -1,0 +1,36 @@
+# API only. MySQL is independently managed and is never part of this Compose project.
+services:
+  server:
+    image: ${SERVER_IMAGE:?SERVER_IMAGE is required}
+    env_file:
+      - ${SERVER_ENV_FILE:?SERVER_ENV_FILE is required}
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      LOCAL_DATABASE_AUTOSTART: "false"
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:?API_HOST_PORT is required}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:8000' + os.environ.get('API_PREFIX', '/api') + '/health/ready', timeout=5)"
+      interval: 5s
+      timeout: 6s
+      start_period: 10s
+      retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

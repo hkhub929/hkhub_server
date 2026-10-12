@@ -6,6 +6,9 @@ __pycache__/
 build/
 dist/
 
+# --- Managed local MySQL data and credentials ---
+.local/
+
 # --- Virtual env ---
 .venv/
 venv/
@@ -16,6 +19,8 @@ ENV/
 .env
 .env.*
 !.env.example
+# Public production configuration is intentionally versioned.
+!.envprod
 
 # --- Tooling caches ---
 .pytest_cache/
