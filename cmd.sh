@@ -23,6 +23,7 @@ Usage: ./cmd.sh [command] [args]
   image:push          Push the backend image (requires IMAGE and registry login)
   image:publish [args]  Build and then push the backend image
   test [args]          Run pytest
+  collector            Run the cross-border queue collector loop in the foreground
   lint                 Run Ruff
   help                 Show this help
 
@@ -143,6 +144,11 @@ case "$command" in
   test)
     require_venv
     exec "$PYTHON" -m pytest "$@"
+    ;;
+  collector)
+    require_venv
+    require_env
+    exec "$PYTHON" -m app.modules.commute.collector
     ;;
   lint)
     require_venv
