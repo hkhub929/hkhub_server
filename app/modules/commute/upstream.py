@@ -14,7 +14,6 @@ from app.core.config import settings
 from app.modules.commute.ports import (
     DIRECTION_FIELDS,
     HONG_KONG_TZ,
-    MTR_LINE,
 )
 
 QUEUE_BASE_URL = "https://secure1.info.gov.hk/immd/mobileapps/2bb9ae17/data"
@@ -23,6 +22,8 @@ QUEUE_URLS = {
     "visitor": f"{QUEUE_BASE_URL}/CPQueueTimeV.json",
 }
 MTR_SCHEDULE_URL = "https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php"
+# Both control points with a verified rail connection sit on the East Rail Line.
+MTR_LINE = "EAL"
 
 # Both payloads are a few kilobytes; anything larger is not the official response.
 MAX_PAYLOAD_BYTES = 65536
