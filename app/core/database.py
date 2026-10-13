@@ -17,13 +17,9 @@ def database_url() -> str:
     if not value:
         raise RuntimeError("DATABASE_URL is required. Copy .env.example to .env first.")
     url = make_url(value)
-    if url.drivername not in {"mysql", "mysql+pymysql"}:
-        raise ValueError("DATABASE_URL must use mysql+pymysql://")
-    return (
-        url.set(drivername="mysql+pymysql")
-        .update_query_dict({"charset": "utf8mb4"})
-        .render_as_string(hide_password=False)
-    )
+    if url.drivername not in {"postgresql", "postgresql+psycopg2"}:
+        raise ValueError("DATABASE_URL must use postgresql+psycopg2://")
+    return url.set(drivername="postgresql+psycopg2").render_as_string(hide_password=False)
 
 
 @lru_cache(maxsize=1)
@@ -36,9 +32,7 @@ def get_engine() -> Engine:
         max_overflow=settings.database_max_overflow,
         connect_args={
             "connect_timeout": 5,
-            "read_timeout": 15,
-            "write_timeout": 15,
-            "init_command": "SET time_zone = '+00:00'",
+            "options": "-c timezone=UTC -c statement_timeout=15000",
         },
     )
 

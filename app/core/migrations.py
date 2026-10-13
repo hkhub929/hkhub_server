@@ -8,7 +8,7 @@ from app.core.database import database_url
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Manage versioned MySQL SQL migrations")
+    parser = argparse.ArgumentParser(description="Manage versioned PostgreSQL SQL migrations")
     parser.add_argument("command", choices=["apply", "list", "rollback"])
     parser.add_argument(
         "--confirm", action="store_true", help="Confirm rollback of the latest migration"
@@ -17,8 +17,8 @@ def main() -> None:
     if args.command == "rollback" and not args.confirm:
         parser.error("Rollback can delete data. Pass --confirm to roll back the latest migration.")
 
-    # SQLAlchemy uses mysql+pymysql; Yoyo uses mysql with the same PyMySQL driver.
-    url = make_url(database_url()).set(drivername="mysql")
+    # SQLAlchemy and Yoyo share psycopg2; Yoyo identifies its backend as postgresql.
+    url = make_url(database_url()).set(drivername="postgresql")
     backend = get_backend(url.render_as_string(hide_password=False))
     migrations = read_migrations(str(PROJECT_ROOT / "db" / "migrations"))
     with backend.lock():

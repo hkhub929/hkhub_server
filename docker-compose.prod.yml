@@ -1,4 +1,4 @@
-# API only. MySQL is independently managed and is never part of this Compose project.
+# API only. PostgreSQL is independently managed and is never part of this Compose project.
 services:
   server:
     image: ${SERVER_IMAGE:?SERVER_IMAGE is required}
@@ -7,7 +7,6 @@ services:
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
-      LOCAL_DATABASE_AUTOSTART: "false"
     ports:
       - "127.0.0.1:${API_HOST_PORT:?API_HOST_PORT is required}:8000"
     extra_hosts:

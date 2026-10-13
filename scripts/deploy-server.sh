@@ -28,7 +28,7 @@ export -n API_HOST_PORT SERVER_IMAGE SERVER_ENV_FILE
 [[ "$API_HOST_PORT" =~ ^[0-9]{2,5}$ ]] || fail 'Invalid host port.'
 (( 10#$API_HOST_PORT >= 1024 && 10#$API_HOST_PORT <= 65535 )) || fail 'Host port must be between 1024 and 65535.'
 [[ "$SERVER_IMAGE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail 'Invalid local image name.'
-[[ "$ENVIRONMENT" == production && "$DEBUG" == false && "$LOCAL_DATABASE_AUTOSTART" == false ]] || fail 'Unsafe production runtime configuration.'
+[[ "$ENVIRONMENT" == production && "$DEBUG" == false ]] || fail 'Unsafe production runtime configuration.'
 for program in docker flock realpath python3; do command -v "$program" >/dev/null || fail "Missing program: $program"; done
 docker compose version >/dev/null
 
@@ -71,10 +71,10 @@ try:
     if not isinstance(secrets["DEEPSEEK_API_KEY"], str):
         raise ValueError()
     database_url = secrets["DATABASE_URL"]
-    if not isinstance(database_url, str) or not database_url.startswith("mysql+pymysql://"):
+    if not isinstance(database_url, str) or not database_url.startswith(("postgresql+psycopg2://", "postgresql://")):
         raise ValueError()
     keys = ("APP_NAME", "VERSION", "ENVIRONMENT", "API_PREFIX", "DEBUG", "LOG_LEVEL",
-            "CORS_ORIGINS", "LOCAL_DATABASE_AUTOSTART", "DATABASE_POOL_SIZE",
+            "CORS_ORIGINS", "DATABASE_POOL_SIZE",
             "DATABASE_MAX_OVERFLOW", "UPSTREAM_TIMEOUT_SECONDS", "DEEPSEEK_BASE_URL",
             "DEEPSEEK_MODEL", "DEEPSEEK_TIMEOUT_SECONDS")
     values = {key: os.environ[key] for key in keys}
@@ -181,4 +181,4 @@ fi
 switch_current "$RELEASE_DIR"
 trap - ERR
 printf 'HK Hub API deployed: release=%s port=%s image=%s\n' "$RELEASE_ID" "$API_HOST_PORT" "$SERVER_IMAGE"
-# Keep previous releases/images for application rollback. Never clean /srv/data or manage MySQL/Nginx.
+# Keep previous releases/images for application rollback. Never clean /srv/data or manage PostgreSQL/Nginx.

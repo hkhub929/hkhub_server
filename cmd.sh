@@ -10,12 +10,12 @@ usage() {
   cat <<'EOF'
 Usage: ./cmd.sh [command] [args]
 
-  init                 Install dependencies; start local MySQL and create database if needed
+  init                 Install dependencies and prepare .env; never start a database
   api, dev (default)   Apply migrations and start API at http://localhost:8000
   serve                Start API without reload or automatic migrations
-  db:up                Ensure native local MySQL on 3307 and configured database exist
-  db:down              Stop only project-owned MySQL; preserve its data
-  db:check             Verify actual database connection, port and MySQL version
+  db:up                Start project-owned PostgreSQL on 5433 and create database if needed
+  db:down              Stop only project-owned PostgreSQL; preserve its data
+  db:check             Verify configured PostgreSQL connection, port and version
   db:migrate           Apply pending SQL files from db/migrations
   db:status            List applied and pending SQL migrations
   db:rollback --confirm  Roll back the latest migration (may delete data)
@@ -26,13 +26,13 @@ Usage: ./cmd.sh [command] [args]
   lint                 Run Ruff
   help                 Show this help
 
-Local API runs directly in .venv; local MySQL is native, never containerized.
-init auto-starts/provisions only ENVIRONMENT=local + localhost:3307 targets.
-Managed data and private admin credentials live in .local/mysql (excluded from Git/images).
-Install native MySQL first if mysqld is unavailable, or configure MYSQLD_BIN.
-Existing instances need valid DATABASE_URL or LOCAL_DATABASE_ADMIN_URL credentials.
-Set LOCAL_DATABASE_AUTOSTART=false to use an independently managed local database.
-Production databases are never started or created by init.
+Local API runs directly in .venv; local PostgreSQL is native, never containerized.
+init and API commands never start the database. Run db:up separately before api.
+db:up/db:down manage only ENVIRONMENT=local + localhost:5433 project-owned targets.
+Managed data lives in .local/postgresql (excluded from Git/images).
+Install native PostgreSQL first, or configure POSTGRES_BIN_DIR.
+For external instances, configure DATABASE_URL and start/manage them independently.
+Production databases are never started or created by these commands.
 Only image:* commands use containers, for packaging and publishing the API.
 IMAGE must specify your registry/repository:version; registry login is handled separately.
 IMAGE_PLATFORM defaults to linux/amd64; set linux/arm64 for ARM servers.
@@ -99,11 +99,9 @@ case "$command" in
     if [[ ! -f .env ]]; then cp .env.example .env; fi
     if [[ ! -x "$PYTHON" ]]; then "${PYTHON_BIN:-python3}" -m venv .venv; fi
     "$PYTHON" -m pip install -e '.[dev]'
-    local_database init
-    printf 'Initialization complete. Run ./cmd.sh api to apply migrations and start the API.\n'
+    printf 'Dependencies ready. Run ./cmd.sh db:up separately, then ./cmd.sh api.\n'
     ;;
   api|dev)
-    local_database init
     migrate apply
     exec "$PYTHON" -m uvicorn app.main:app --reload \
       --host "${API_HOST:-0.0.0.0}" --port "${API_PORT:-8000}" "$@"

@@ -99,7 +99,7 @@ class HomeToolsResponse(BaseModel):
 
 
 def load_home_tools(session: Session) -> HomeToolsConfig:
-    statement = text("SELECT `value` FROM app_settings WHERE `key` = :key").columns(value=JSON)
+    statement = text("SELECT value FROM app_settings WHERE key = :key").columns(value=JSON)
     try:
         value = session.execute(statement, {"key": HOME_TOOLS_KEY}).scalar_one_or_none()
     except SQLAlchemyError as error:
@@ -227,7 +227,7 @@ class ToolCatalogResponse(BaseModel):
 
 
 def load_tool_catalog(session: Session) -> ToolCatalogConfig:
-    statement = text("SELECT `value` FROM app_settings WHERE `key` = :key").columns(value=JSON)
+    statement = text("SELECT value FROM app_settings WHERE key = :key").columns(value=JSON)
     try:
         value = session.execute(statement, {"key": "home.tools.v2"}).scalar_one_or_none()
     except SQLAlchemyError as error:

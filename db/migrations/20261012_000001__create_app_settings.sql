@@ -1,14 +1,28 @@
--- Initial platform configuration for MySQL 8.
+-- Initial platform configuration for PostgreSQL.
 -- Business tables are added by later migrations.
 -- Never edit an applied migration; create a new versioned SQL file instead.
--- Application connections use UTC for all date/time values.
+-- Timestamps preserve UTC instants; application connections use UTC.
 CREATE TABLE app_settings (
-    `key` VARCHAR(128) NOT NULL,
-    `value` JSON NOT NULL,
+    key VARCHAR(128) PRIMARY KEY,
+    value JSONB NOT NULL,
     description VARCHAR(512) NOT NULL DEFAULT '',
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-        ON UPDATE CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (`key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    COMMENT='Non-secret application configuration; credentials stay in environment variables';
+    created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE app_settings IS
+    'Non-secret application configuration; credentials stay in environment variables';
+
+CREATE FUNCTION set_app_settings_updated_at() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW IS DISTINCT FROM OLD THEN
+        NEW.updated_at = statement_timestamp();
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER app_settings_updated_at
+BEFORE UPDATE ON app_settings
+FOR EACH ROW EXECUTE FUNCTION set_app_settings_updated_at();

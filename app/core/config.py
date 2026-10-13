@@ -24,9 +24,7 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     database_url: SecretStr = SecretStr("")
-    local_database_autostart: bool = True
-    local_database_admin_url: SecretStr = SecretStr("")
-    mysqld_bin: str = ""
+    postgres_bin_dir: str = ""
     cors_origins: list[str] = ["http://localhost:8080", "http://127.0.0.1:8080"]
     database_pool_size: int = 5
     database_max_overflow: int = 10

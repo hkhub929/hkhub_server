@@ -3,7 +3,7 @@
 -- Edit app_settings.value for key home.tools to publish updates without restarting the API.
 -- enabled=false hides an entry; sort_order controls order. Missing copy falls back to zh-Hant.
 -- action.type: none (show message), url (HTTPS), route (an already installed app route).
-INSERT INTO app_settings (`key`, `value`, description)
+INSERT INTO app_settings (key, value, description)
 VALUES (
     'home.tools',
     '{

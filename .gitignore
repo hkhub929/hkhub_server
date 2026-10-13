@@ -6,7 +6,7 @@ __pycache__/
 build/
 dist/
 
-# --- Managed local MySQL data and credentials ---
+# --- Managed local database data and credentials ---
 .local/
 
 # --- Virtual env ---
