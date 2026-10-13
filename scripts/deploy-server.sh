@@ -109,13 +109,27 @@ compose_release() {
 }
 
 wait_until_ready() {
-  local directory="$1" id status attempt
+  local directory="$1" id status attempt worker_id worker_status services
   for ((attempt = 0; attempt < 30; attempt++)); do
     id="$(docker compose --project-name "$COMPOSE_PROJECT" --env-file "$directory/release.env" \
       -f "$directory/docker-compose.prod.yml" ps --all --quiet server)" || return 1
     if [[ -n "$id" ]]; then
       status="$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id")" || return 1
-      [[ "$status" != 'running healthy' ]] || return 0
+      if [[ "$status" == 'running healthy' ]]; then
+        # Older releases lack the worker. New releases must have a stable running process.
+        services="$(docker compose --project-name "$COMPOSE_PROJECT" --env-file "$directory/release.env" \
+          -f "$directory/docker-compose.prod.yml" config --services)" || return 1
+        if ! grep -qx 'commute-worker' <<< "$services"; then
+          return 0
+        fi
+        worker_id="$(docker compose --project-name "$COMPOSE_PROJECT" --env-file "$directory/release.env" \
+          -f "$directory/docker-compose.prod.yml" ps --all --quiet commute-worker)" || return 1
+        if [[ -n "$worker_id" ]]; then
+          worker_status="$(docker inspect --format '{{.State.Status}} {{.RestartCount}}' "$worker_id")" || return 1
+          [[ "$worker_status" != 'running 0' ]] || return 0
+          [[ "$worker_status" != exited* && "$worker_status" != dead* ]] || return 1
+        fi
+      fi
       [[ "$status" != exited* && "$status" != dead* ]] || return 1
     fi
     sleep 5
@@ -145,7 +159,7 @@ rollback_on_error() {
     if [[ -n "$previous_release" && -n "$previous_image" ]]; then
       SERVER_IMAGE="$previous_image" docker compose --project-name "$COMPOSE_PROJECT" \
         --env-file "$previous_release/release.env" -f "$previous_release/docker-compose.prod.yml" \
-        up -d --no-build --pull never --no-deps server
+        up -d --no-build --pull never --no-deps --remove-orphans
       if [[ $? == 0 ]] && wait_until_ready "$previous_release"; then
         switch_current "$previous_release"
         printf 'Previous API image and configuration restored and ready.\n' >&2
@@ -154,7 +168,7 @@ rollback_on_error() {
       fi
     else
       docker compose --project-name "$COMPOSE_PROJECT" --env-file "$RELEASE_DIR/release.env" \
-        -f "$RELEASE_DIR/docker-compose.prod.yml" stop server
+        -f "$RELEASE_DIR/docker-compose.prod.yml" stop server commute-worker
       printf 'No previous running release. Manual cleanup may be needed; database untouched.\n' >&2
     fi
   fi
@@ -172,8 +186,11 @@ configuration_installed=true
 if [[ "$APPLY_MIGRATIONS" == true ]]; then
   compose_release run --rm --no-deps server python -m app.core.migrations apply
 fi
+# Refuse to activate this release before its additive commute migration is applied.
+compose_release run --rm --no-deps server python -c \
+  "from app.core.database import get_engine; from sqlalchemy import text; connection = get_engine().connect(); connection.execute(text('SELECT audience, hk_slot, attempt_count, payload FROM commute_observations LIMIT 0')); connection.close()"
 activation_attempted=true
-compose_release up -d --no-build --pull never --no-deps server
+compose_release up -d --no-build --pull never --no-deps server commute-worker
 if ! wait_until_ready "$RELEASE_DIR"; then
   printf 'New API did not pass the database-aware readiness check.\n' >&2
   false

@@ -13,6 +13,7 @@ Usage: ./cmd.sh [command] [args]
   init                 Install dependencies and prepare .env; never start a database
   api, dev (default)   Apply migrations and start API at http://localhost:8000
   serve                Start API without reload or automatic migrations
+  commute:worker       Apply migrations and start the independent commute collector
   db:up                Start project-owned PostgreSQL on 5433 and create database if needed
   db:down              Stop only project-owned PostgreSQL; preserve its data
   db:check             Verify configured PostgreSQL connection, port and version
@@ -27,7 +28,8 @@ Usage: ./cmd.sh [command] [args]
   help                 Show this help
 
 Local API runs directly in .venv; local PostgreSQL is native, never containerized.
-init and API commands never start the database. Run db:up separately before api.
+init, API and worker commands never start the database. Run db:up separately first.
+Run commute:worker in a separate terminal alongside the API; Ctrl+C stops the worker.
 db:up/db:down manage only ENVIRONMENT=local + localhost:5433 project-owned targets.
 Managed data lives in .local/postgresql (excluded from Git/images).
 Install native PostgreSQL first, or configure POSTGRES_BIN_DIR.
@@ -111,6 +113,10 @@ case "$command" in
     require_env
     exec "$PYTHON" -m uvicorn app.main:app \
       --host "${API_HOST:-0.0.0.0}" --port "${API_PORT:-8000}" "$@"
+    ;;
+  commute:worker)
+    migrate apply
+    exec "$PYTHON" -m app.modules.commute.worker
     ;;
   db:up)
     local_database up

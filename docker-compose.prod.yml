@@ -1,4 +1,4 @@
-# API only. PostgreSQL is independently managed and is never part of this Compose project.
+# API and independent collection worker. PostgreSQL remains independently managed.
 services:
   server:
     image: ${SERVER_IMAGE:?SERVER_IMAGE is required}
@@ -28,6 +28,32 @@ services:
       timeout: 6s
       start_period: 10s
       retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  commute-worker:
+    image: ${SERVER_IMAGE:?SERVER_IMAGE is required}
+    command: ["python", "-m", "app.modules.commute.worker"]
+    env_file:
+      - ${SERVER_ENV_FILE:?SERVER_ENV_FILE is required}
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 45s
+    # The image's HTTP healthcheck belongs to the API, not this background process.
+    healthcheck:
+      disable: true
     logging:
       driver: json-file
       options:
