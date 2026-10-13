@@ -33,31 +33,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  # Samples Immigration Department queue status on a fixed 15-minute schedule.
-  # The API only reads stored observations, so this service must keep running for
-  # current status and the one-week comparison to stay available. Migrations remain
-  # a separate release step and must be applied before this service starts.
-  collector:
-    image: ${SERVER_IMAGE:?SERVER_IMAGE is required}
-    env_file:
-      - ${SERVER_ENV_FILE:?SERVER_ENV_FILE is required}
-    environment:
-      ENVIRONMENT: production
-      DEBUG: "false"
-    command:
-      - python
-      - -m
-      - app.modules.commute.collector
-    restart: unless-stopped
-    init: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    stop_grace_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"

@@ -29,12 +29,6 @@ class Settings(BaseSettings):
     database_pool_size: int = 5
     database_max_overflow: int = 10
     upstream_timeout_seconds: float = 15.0
-    # Cross-border commute sampling. Retention must comfortably exceed the history
-    # window so a full week of comparison survives weekends and public holidays.
-    commute_collect_interval_minutes: int = 15
-    commute_history_days: int = 7
-    commute_retention_days: int = 30
-    commute_stale_after_minutes: int = 30
     deepseek_api_key: SecretStr = SecretStr("")
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
@@ -54,36 +48,6 @@ class Settings(BaseSettings):
     def validate_deepseek_timeout(cls, value: float) -> float:
         if not 10 <= value <= 180:
             raise ValueError("DEEPSEEK_TIMEOUT_SECONDS must be between 10 and 180")
-        return value
-
-    @field_validator("commute_collect_interval_minutes")
-    @classmethod
-    def validate_commute_interval(cls, value: int) -> int:
-        # The official source publishes every 15 minutes; a faster loop only repeats it.
-        if not 5 <= value <= 60:
-            raise ValueError("COMMUTE_COLLECT_INTERVAL_MINUTES must be between 5 and 60")
-        return value
-
-    @field_validator("commute_history_days")
-    @classmethod
-    def validate_commute_history_days(cls, value: int) -> int:
-        if not 1 <= value <= 14:
-            raise ValueError("COMMUTE_HISTORY_DAYS must be between 1 and 14")
-        return value
-
-    @field_validator("commute_retention_days")
-    @classmethod
-    def validate_commute_retention_days(cls, value: int) -> int:
-        if not 8 <= value <= 365:
-            raise ValueError("COMMUTE_RETENTION_DAYS must be between 8 and 365")
-        return value
-
-    @field_validator("commute_stale_after_minutes")
-    @classmethod
-    def validate_commute_stale_after(cls, value: int) -> int:
-        # Two missed sampling windows are treated as stale rather than current.
-        if not 15 <= value <= 240:
-            raise ValueError("COMMUTE_STALE_AFTER_MINUTES must be between 15 and 240")
         return value
 
     @field_validator("api_prefix")
