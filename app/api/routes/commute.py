@@ -1,7 +1,7 @@
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -10,7 +10,7 @@ from app.core.errors import AppError
 from app.core.http_client import get_http_client
 from app.core.i18n import request_language
 from app.modules.commute.schemas import (
-    Audience, Border, BordersResponse, HistoryResponse, PortCode, TransitResponse,
+    Audience, Border, BordersResponse, Direction, HistoryResponse, PortCode, TransitResponse,
 )
 from app.modules.commute.service import read_borders, read_history
 from app.modules.commute.transit import read_transit
@@ -43,10 +43,11 @@ def border(port_code: PortCode, request: Request, response: Response,
 
 @router.get('/borders/{port_code}/history', response_model=HistoryResponse)
 def history(port_code: PortCode, audience: Audience, response: Response,
+            direction: Direction = Query(default='arrival'),
             session: Session = Depends(get_db)):
     headers(response)
     try:
-        return read_history(session, port_code, audience)
+        return read_history(session, port_code, audience, direction)
     except SQLAlchemyError as error:
         logger.warning('History lookup unavailable type=%s', type(error).__name__)
         raise AppError('http_503', 'History unavailable', 503) from error

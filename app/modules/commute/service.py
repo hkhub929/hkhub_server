@@ -10,7 +10,8 @@ from app.modules.commute.schemas import (
 
 
 # Never substitute an earlier successful observation for a newer failed fetch.
-def queue_from_row(row, port: str, now: datetime | None = None) -> QueueStatus:
+def queue_from_row(row, port: str, now: datetime | None = None,
+                   direction: str = 'arrival') -> QueueStatus:
     if row is None:
         return QueueStatus()
     status = QueueStatus(fetched_at=row['fetched_at'], attempted_at=row['attempted_at'])
@@ -18,7 +19,7 @@ def queue_from_row(row, port: str, now: datetime | None = None) -> QueueStatus:
         return status.model_copy(update={'reason': 'fetch_failed'})
     if now is not None and (now - row['fetched_at']).total_seconds() >= STALE_SECONDS:
         return status.model_copy(update={'reason': 'stale'})
-    value = (row['payload'] or {}).get(port, {}).get('arrival', {})
+    value = (row['payload'] or {}).get(port, {}).get(direction, {})
     code = value.get('code')
     reason = value.get('reason', 'missing')
     return status.model_copy(update={'code': code, 'reason': reason})
@@ -35,7 +36,11 @@ def read_borders(session: Session, language: str) -> BordersResponse:
         code=code, name=copy_text(meta['name'], language),
         counterpart=copy_text(meta['counterpart'], language), modes=meta['modes'],
         queues={audience: queue_from_row(recent.get(audience), code, now)
-                for audience in ('resident', 'visitor')}, source_url=SOURCE_PAGE,
+                for audience in ('resident', 'visitor')},
+        departure_queues={audience: queue_from_row(
+            recent.get(audience), code, now, 'departure')
+            for audience in ('resident', 'visitor')},
+        source_url=SOURCE_PAGE,
     ) for code, meta in PORTS.items()]
     return BordersResponse(server_time=now, items=items)
 
@@ -60,7 +65,7 @@ def compare(current: QueueStatus, days: list[HistoryDay]) -> tuple[int, Comparis
     )
 
 
-def read_history(session: Session, port: str, audience: str) -> HistoryResponse:
+def read_history(session: Session, port: str, audience: str, direction: str = 'arrival') -> HistoryResponse:
     now = datetime.now(timezone.utc)
     today, slot = slot_at(now)
     rows = session.execute(text('''
@@ -71,14 +76,15 @@ def read_history(session: Session, port: str, audience: str) -> HistoryResponse:
     '''), {'audience': audience, 'slot': slot, 'start': today - timedelta(days=7),
           'end': today}).mappings().all()
     by_date = {row['hk_date']: row for row in rows}
-    current = queue_from_row(by_date.get(today), port, now)
+    current = queue_from_row(by_date.get(today), port, now, direction)
     # Historical observations are not stale simply because they were collected days ago.
-    days = [HistoryDay(date=day, queue=queue_from_row(by_date.get(day), port))
+    days = [HistoryDay(date=day, queue=queue_from_row(by_date.get(day), port, direction=direction))
             for day in (today - timedelta(days=offset) for offset in range(7, 0, -1))]
     valid_count, comparison = compare(current, days)
     start_minutes, end_minutes = slot * 15, (slot + 1) * 15
     return HistoryResponse(
-        server_time=now, port_code=port, audience=audience, current=current, days=days,
+        server_time=now, port_code=port, audience=audience, direction=direction,
+        current=current, days=days,
         slot_start=f'{start_minutes // 60:02d}:{start_minutes % 60:02d}',
         slot_end=f'{end_minutes // 60:02d}:{end_minutes % 60:02d}',
         valid_count=valid_count, comparison=comparison,

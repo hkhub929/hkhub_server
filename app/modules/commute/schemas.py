@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 Audience = Literal['resident', 'visitor']
+Direction = Literal['arrival', 'departure']
 PortCode = Literal['LWS', 'LSC', 'SBC']
 QueueReason = Literal[
     'available', 'maintenance', 'closed', 'missing', 'invalid',
@@ -17,13 +18,13 @@ class QueueStatus(BaseModel):
     fetched_at: datetime | None = None
     attempted_at: datetime | None = None
 
-
 class Border(BaseModel):
     code: PortCode
     name: str
     counterpart: str
     modes: list[Literal['mtr', 'bus']]
     queues: dict[Audience, QueueStatus]
+    departure_queues: dict[Audience, QueueStatus]
     source_url: str
 
 
@@ -53,7 +54,7 @@ class HistoryResponse(BaseModel):
     server_time: datetime
     port_code: PortCode
     audience: Audience
-    direction: str = 'arrival'
+    direction: Direction = 'arrival'
     timezone: str = 'Asia/Hong_Kong'
     slot_start: str
     slot_end: str

@@ -161,5 +161,5 @@ async def read_transit(client: httpx.AsyncClient, port: str, language: str, cach
             if port in ('LWS', 'LSC'):
                 jobs.insert(0, mtr(client, port, language))
             entry['items'] = await asyncio.gather(*jobs)
-            entry['expires'] = monotonic() + 15
+            entry['expires'] = monotonic() + 60
     return TransitResponse(server_time=datetime.now(timezone.utc), items=entry['items'])
