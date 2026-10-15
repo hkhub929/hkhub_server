@@ -13,6 +13,7 @@ Usage: ./cmd.sh [command] [args]
   init                 Install dependencies and prepare .env; never start a database
   api, dev (default)   Apply migrations and start API at http://localhost:8000
   serve                Start API without reload or automatic migrations
+                       api, dev and serve stop any process already listening on API_PORT first
   commute:worker       Apply migrations and start the independent commute collector
   db:up                Start project-owned PostgreSQL on 5433 and create database if needed
   db:down              Stop only project-owned PostgreSQL; preserve its data
@@ -57,6 +58,68 @@ require_env() {
     printf 'Missing .env. Run ./cmd.sh init and configure DATABASE_URL.\n' >&2
     exit 1
   fi
+}
+
+# List PIDs listening on a TCP port. Falls back when lsof is unavailable.
+listening_pids() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+  elif command -v fuser >/dev/null 2>&1; then
+    fuser -n tcp "$port" 2>/dev/null | tr -s ' \t' '\n' || true
+  else
+    pgrep -f "python.*-m uvicorn" 2>/dev/null || true
+  fi
+}
+
+# Recursively list child PIDs, deepest first.
+descendant_pids() {
+  local parent="$1" child
+  for child in $(pgrep -P "$parent" 2>/dev/null || true); do
+    descendant_pids "$child"
+    printf '%s\n' "$child"
+  done
+}
+
+# Listening PIDs plus their descendants; uvicorn --reload keeps both a reloader
+# and a worker process bound to the same socket, so removing only one is not enough.
+port_process_tree() {
+  local port="$1" pid tree=""
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    # Never target this script or its parent shell.
+    [[ "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+    tree+="$pid"$'\n'
+    tree+="$(descendant_pids "$pid")"$'\n'
+  done < <(listening_pids "$port")
+  printf '%s' "$tree" | sort -u | grep -v '^$' || true
+}
+
+stop_port() {
+  local port="$1" pids remaining waited=0
+  pids="$(port_process_tree "$port")"
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+  printf 'Stopping existing process(es) on port %s: %s\n' "$port" "$(printf '%s ' $pids)"
+  kill $pids 2>/dev/null || true
+  while [[ $waited -lt 20 ]]; do
+    remaining="$(port_process_tree "$port")"
+    if [[ -z "$remaining" ]]; then
+      printf 'Port %s is free.\n' "$port"
+      return 0
+    fi
+    sleep 0.25
+    waited=$((waited + 1))
+  done
+  printf 'Graceful stop timed out; force killing: %s\n' "$(printf '%s ' $remaining)" >&2
+  kill -9 $remaining 2>/dev/null || true
+  sleep 0.5
+}
+
+# Restarting the API always reclaims its port so a stale server can never hold it.
+restart_api() {
+  stop_port "${API_PORT:-8000}"
 }
 
 migrate() {
@@ -105,12 +168,14 @@ case "$command" in
     ;;
   api|dev)
     migrate apply
+    restart_api
     exec "$PYTHON" -m uvicorn app.main:app --reload \
       --host "${API_HOST:-0.0.0.0}" --port "${API_PORT:-8000}" "$@"
     ;;
   serve)
     require_venv
     require_env
+    restart_api
     exec "$PYTHON" -m uvicorn app.main:app \
       --host "${API_HOST:-0.0.0.0}" --port "${API_PORT:-8000}" "$@"
     ;;
