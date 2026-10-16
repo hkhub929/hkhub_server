@@ -38,11 +38,10 @@ jobs:
           [[ "$SERVER_USER" != your-server-user && "$SERVER_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || {
             printf 'Configure SERVER_USER in .env.prod\n' >&2; exit 1;
           }
-          [[ "$SERVER_SSH_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$SERVER_SSH_PORT >= 1 && 10#$SERVER_SSH_PORT <= 65535 ))
           [[ -n "$SERVER_SSH_KNOWN_HOSTS" ]] || {
             printf 'Set a verified SERVER_SSH_KNOWN_HOSTS entry in .env.prod\n' >&2; exit 1;
           }
-          printf 'host=%s\nuser=%s\nport=%s\n' "$SERVER_HOST" "$SERVER_USER" "$SERVER_SSH_PORT" >> "$GITHUB_OUTPUT"
+          printf 'host=%s\nuser=%s\n' "$SERVER_HOST" "$SERVER_USER" >> "$GITHUB_OUTPUT"
 
       - name: Archive committed source (never local credentials)
         shell: bash
@@ -59,7 +58,6 @@ jobs:
         env:
           SERVER_HOST: ${{ steps.target.outputs.host }}
           SERVER_USER: ${{ steps.target.outputs.user }}
-          SERVER_SSH_PORT: ${{ steps.target.outputs.port }}
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -87,7 +85,7 @@ jobs:
           chmod 600 "$key_dir/id" "$key_dir/known_hosts" "$key_dir/secrets.json"
           ssh_options=(-i "$key_dir/id" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=$key_dir/known_hosts" -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
-          scp "${ssh_options[@]}" -P "$SERVER_SSH_PORT" "$archive" "$SERVER_USER@$SERVER_HOST:$remote_archive"
-          ssh "${ssh_options[@]}" -p "$SERVER_SSH_PORT" "$SERVER_USER@$SERVER_HOST" \
+          scp "${ssh_options[@]}" -P 22 "$archive" "$SERVER_USER@$SERVER_HOST:$remote_archive"
+          ssh "${ssh_options[@]}" -p 22 "$SERVER_USER@$SERVER_HOST" \
             "set -eu; umask 077; mkdir -p '$runtime_dir'; tar -xzf '$remote_archive' -C '$runtime_dir'; rm -f '$remote_archive'; bash '$runtime_dir/scripts/deploy-server.sh' '$release_id' '$APPLY_MIGRATIONS'; rm -rf '$runtime_dir'" \
             < "$key_dir/secrets.json"
