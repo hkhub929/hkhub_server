@@ -7,7 +7,6 @@ from uuid import uuid4
 
 from sqlalchemy import text
 
-from app.core.config import settings
 from app.core.database import get_engine
 from app.modules.company_observation.calendar import expected_weeks, periods_since
 from app.modules.company_observation.sources import PARSER_VERSION, Resource
@@ -183,9 +182,7 @@ def create_snapshot(kind, start, end, selected: list[dict], missing: list[dict],
         status = 'partial' if missing else 'complete'
         if not selected:
             status = 'unavailable'
-        analysis = 'pending' if settings.deepseek_api_key.get_secret_value() else 'not_configured'
-        if status != 'complete' or not companies:
-            analysis = 'not_needed'
+        analysis = 'not_needed'
         report_id = str(uuid4())
         if current:
             conn.execute(text('''UPDATE company_period_reports SET is_current=false,

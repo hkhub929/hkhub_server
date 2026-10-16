@@ -48,37 +48,13 @@ class PeriodsResponse(BaseModel):
     source_error_code: str | None = None
 
 
-class Topic(BaseModel):
-    topic_id: str
-    report_id: UUID
-    title: str
-    explanation: str
-    company_count: int
-    content_language: str
-    language_fallback: bool
-    terms: list[str] = Field(default_factory=list)
-
-
 class Overview(Period):
     dataset_fingerprint: str
     analysis_version: str
-    analysis_attempt_count: int = 0
-    analysis_max_attempts: int = 3
-    analysis_retry_after: datetime | None = None
-    analysis_retry_allowed: bool = False
     observed_company_count: int
     total_company_count: int | None
-    identified_company_count: int | None = None
-    unknown_company_count: int | None = None
-    unknown_company_ratio: float | None = None
-    summary: str | None = None
-    findings: list[str] = Field(default_factory=list)
-    content_language: str | None = None
-    language_fallback: bool = False
-    generated_at: datetime | None = None
     sources: list[Source]
     missing_resources: list[MissingResource]
-    topics: list[Topic]
 
 
 class Company(BaseModel):
@@ -91,7 +67,6 @@ class Company(BaseModel):
         description='Legacy alias for registration_date; may be a re-domiciliation date')
     registration_date: date = Field(description='Official incorporation or re-domiciliation event date')
     event_type: Literal['incorporation', 'incorporation_or_redomiciliation']
-    evidence: list[dict[str, str]]
     source: Source
 
 

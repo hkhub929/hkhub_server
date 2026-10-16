@@ -7,14 +7,11 @@ import logging
 import signal
 
 import httpx
-from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
 from app.core.database import dispose_engine, get_engine
-from app.modules.company_observation.analysis import ModelCompletionError, analyse_report
-from app.modules.company_observation.analysis_jobs import BudgetExceeded, claim_report, fail_report
 from app.modules.company_observation.calendar import period_end
 from app.modules.company_observation.sources import (
     LIQUIDATIONS, Resource, discover, download, parse_companies, parse_liquidations,
@@ -106,54 +103,6 @@ async def collect_sources(client: httpx.AsyncClient, stop: asyncio.Event) -> Non
         finish_collection(token, resources, error_code)
 
 
-def analysis_failure(error: Exception) -> tuple[str, str]:
-    """Keep diagnostics bounded and never log credentials, response bodies or AI input."""
-    if isinstance(error, ModelCompletionError):
-        return error.code, f'finish_reason={error.finish_reason}'
-    if isinstance(error, (httpx.TimeoutException, asyncio.TimeoutError)):
-        return 'analysis_timeout', type(error).__name__
-    if isinstance(error, httpx.HTTPStatusError):
-        status = error.response.status_code
-        code = {401: 'analysis_auth_failed', 403: 'analysis_access_denied',
-                402: 'analysis_balance_insufficient', 429: 'analysis_rate_limited',
-                400: 'analysis_request_invalid', 404: 'analysis_model_unavailable',
-                422: 'analysis_request_invalid'}.get(status, 'analysis_upstream_failed')
-        return code, f'http_status={status}'
-    if isinstance(error, httpx.HTTPError):
-        return 'analysis_connection_failed', type(error).__name__
-    if isinstance(error, ValidationError):
-        # Error types and count are safe; validation inputs and messages may contain AI text.
-        kinds = sorted({item['type'] for item in error.errors(include_input=False,
-                                                               include_context=False, include_url=False)})
-        return 'analysis_schema_invalid', f'validation_count={error.error_count()} types={",".join(kinds)}'
-    known = {'analysis_response_too_large', 'analysis_invalid_envelope', 'analysis_truncated', 'analysis_merge_limit',
-             'analysis_metric_invalid', 'analysis_population_invalid', 'analysis_batch_incomplete',
-             'analysis_evidence_invalid', 'analysis_merge_invalid', 'analysis_lease_lost', 'analysis_invalid'}
-    if type(error) is ValueError and str(error) in known:
-        return str(error), type(error).__name__
-    return 'analysis_invalid', type(error).__name__
-
-
-async def process_analysis(client: httpx.AsyncClient, stop: asyncio.Event) -> None:
-    while not stop.is_set():
-        report = claim_report()
-        if report is None:
-            return
-        try:
-            await analyse_report(client, report)
-            logger.info('Company analysis published report=%s', report['id'])
-        except BudgetExceeded as error:
-            code = 'analysis_daily_budget_exceeded' if error.daily else 'analysis_report_budget_exceeded'
-            logger.warning('Company analysis paused report=%s code=%s', report['id'], code)
-            fail_report(report, code, budget=error.daily)
-            if error.daily:
-                return
-        except (httpx.HTTPError, asyncio.TimeoutError, ValueError, KeyError, TypeError) as error:
-            code, detail = analysis_failure(error)
-            logger.warning('Company analysis failed report=%s code=%s detail=%s', report['id'], code, detail)
-            fail_report(report, code)
-
-
 async def run(once: bool) -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -164,11 +113,9 @@ async def run(once: bool) -> None:
         follow_redirects=False, headers={'User-Agent': f'HKHub/{settings.version}'}) as client:
         while not stop.is_set():
             try:
-                if settings.company_observation_enabled:
-                    if loop.time() >= next_collection:
-                        await collect_sources(client, stop)
-                        next_collection = loop.time() + settings.company_observation_poll_seconds
-                    await process_analysis(client, stop)
+                if settings.company_observation_enabled and loop.time() >= next_collection:
+                    await collect_sources(client, stop)
+                    next_collection = loop.time() + settings.company_observation_poll_seconds
             except SQLAlchemyError as error:
                 logger.error('Company worker database failure type=%s', type(error).__name__)
             if once:
@@ -180,8 +127,8 @@ async def run(once: bool) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='Collect official company sources and analyse full periods')
-    parser.add_argument('--once', action='store_true', help='One collection and bounded analysis pass')
+    parser = argparse.ArgumentParser(description='Collect official company sources and build period snapshots')
+    parser.add_argument('--once', action='store_true', help='One collection pass')
     args = parser.parse_args()
     logging.basicConfig(level=settings.log_level, format='%(asctime)s %(levelname)s %(message)s')
     try:

@@ -35,15 +35,11 @@ class Settings(BaseSettings):
     deepseek_timeout_seconds: float = 150.0
 
     company_observation_enabled: bool = True
-    company_observation_ai_enabled: bool = True
     company_observation_poll_seconds: int = Field(default=86400, ge=300, le=604800)
     company_observation_source_timeout_seconds: int = Field(default=120, ge=15, le=300)
     company_observation_max_download_bytes: int = Field(default=8388608, ge=65536, le=33554432)
     company_observation_max_source_rows: int = Field(default=30000, ge=1000, le=100000)
     company_observation_batch_size: int = Field(default=100, ge=10, le=150)
-    company_observation_daily_call_limit: int = Field(default=200, ge=0, le=1000)
-    company_observation_report_call_limit: int = Field(default=400, ge=0, le=5000)
-    company_observation_max_analysis_attempts: int = Field(default=3, ge=1, le=5)
 
     @field_validator("deepseek_base_url")
     @classmethod
