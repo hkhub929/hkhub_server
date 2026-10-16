@@ -13,11 +13,12 @@ from app.modules.company_observation.calendar import latest_ended, period_end, p
 from app.modules.company_observation.schemas import (
     CompaniesResponse, Company, LiquidationsResponse, Overview, Period, PeriodsResponse, Topic,
 )
-from app.modules.company_observation.storage import normalize
+from app.modules.company_observation.storage import ANALYSIS_VERSION, normalize
 
 
 def period_data(row) -> dict:
-    return {'report_id': row['id'], **{key: row[key] for key in
+    scope = 'incorporation_and_redomiciliation' if row['analysis_version'] == ANALYSIS_VERSION else 'incorporation'
+    return {'report_id': row['id'], 'population_scope': scope, **{key: row[key] for key in
         ('period_type', 'start_date', 'end_date_exclusive', 'data_status', 'analysis_status', 'error_code')}}
 
 
@@ -83,6 +84,7 @@ def read_overview(session: Session, kind: str, start: date | None, language: str
         and row['attempt_count'] < settings.company_observation_max_analysis_attempts
         and row['data_status'] == 'complete' and count > 0
         and settings.company_observation_enabled and settings.company_observation_ai_enabled
+        and row['analysis_version'] == ANALYSIS_VERSION
         and bool(settings.deepseek_api_key.get_secret_value()))
     return Overview(**period_data(row), dataset_fingerprint=row['dataset_fingerprint'],
         analysis_version=row['analysis_version'], analysis_attempt_count=row['attempt_count'],
@@ -125,7 +127,7 @@ def decode_cursor(cursor: str, binding: str) -> tuple[date, str]:
 
 def read_companies(session: Session, report_id: UUID, topic_id: str | None,
                    query: str, cursor: str | None, limit: int) -> CompaniesResponse:
-    current_report(session, report_id)
+    report = current_report(session, report_id)
     if topic_id:
         read_topic(session, report_id, topic_id, 'zh-Hant')
     query = normalize(query.strip())
@@ -134,8 +136,9 @@ def read_companies(session: Session, report_id: UUID, topic_id: str | None,
     # position() gives literal search semantics; %, _ and backslashes are ordinary text.
     rows = session.execute(text('''
         SELECT c.company_key, c.incorporation_date, r.identifier_type, r.identifier_value,
-            r.name_en, r.name_zh, f.resource_id, f.source_url, f.coverage_start,
+            r.name_en, r.name_zh, r.event_type, f.resource_id, f.source_url, f.coverage_start,
             f.coverage_end_exclusive, f.fetched_at, f.published_date, f.status,
+            f.diagnostics->>'date_semantics' AS date_semantics,
             COALESCE(m.evidence, '[]'::jsonb) AS evidence
         FROM company_report_companies c JOIN company_source_records r ON r.id=c.source_record_id
         JOIN company_source_files f ON f.id=r.source_file_id
@@ -154,10 +157,13 @@ def read_companies(session: Session, report_id: UUID, topic_id: str | None,
         next_cursor = base64.urlsafe_b64encode(json.dumps({'binding': binding,
             'date': last['incorporation_date'].isoformat(), 'key': last['company_key']}).encode()).decode().rstrip('=')
     items = [Company(**{key: row[key] for key in ('company_key', 'identifier_type', 'identifier_value',
-             'name_en', 'name_zh', 'incorporation_date', 'evidence')},
+             'name_en', 'name_zh', 'incorporation_date', 'event_type', 'evidence')},
+             registration_date=row['incorporation_date'],
              source={key: row[key] for key in ('resource_id', 'source_url', 'coverage_start',
-             'coverage_end_exclusive', 'fetched_at', 'published_date', 'status')}) for row in rows[:limit]]
-    return CompaniesResponse(report_id=report_id, items=items, next_cursor=next_cursor)
+             'coverage_end_exclusive', 'fetched_at', 'published_date', 'status', 'date_semantics')})
+             for row in rows[:limit]]
+    return CompaniesResponse(report_id=report_id, population_scope=period_data(report)['population_scope'],
+                             items=items, next_cursor=next_cursor)
 
 
 def read_liquidations(session: Session, limit: int) -> LiquidationsResponse:

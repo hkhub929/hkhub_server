@@ -1,14 +1,17 @@
-"""Supervise all background collectors: python -m app.worker [--check]."""
+"""Supervise all background collectors: python -m app.worker [--reload | --check]."""
 import argparse
 import asyncio
 import logging
 import os
 import signal
 import socket
+import subprocess
 import sys
+import threading
 from dataclasses import dataclass
+from pathlib import Path
 
-from app.core.config import settings
+from app.core.config import PROJECT_ROOT, settings
 
 logger = logging.getLogger('hkhub.worker')
 WORKERS = (
@@ -140,16 +143,85 @@ def check_health() -> bool:
         return False
 
 
+def stop_reload_process(process: subprocess.Popen | None) -> None:
+    if process is None:
+        return
+    if process.poll() is None:
+        logger.info('Waiting for background tasks to stop before restarting or exiting')
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+    # The supervisor applies its own shutdown timeout and reaps all collectors.
+    # Never kill only the supervisor: its collectors run in independent sessions.
+    process.wait()
+
+
+def run_reload() -> None:
+    from watchfiles import DefaultFilter, watch
+
+    default_filter = DefaultFilter(ignore_dirs=(*DefaultFilter.ignore_dirs, '.local', '.ruff_cache'))
+
+    def watch_filter(change, path: str) -> bool:
+        file = Path(path)
+        relevant = file == PROJECT_ROOT / '.env' or (
+            file.suffix == '.py' and file.is_relative_to(PROJECT_ROOT / 'app')
+        )
+        return relevant and default_filter(change, path)
+
+    stop = threading.Event()
+    previous_handlers = {}
+    process = None
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            previous_handlers[sig] = signal.signal(sig, lambda *_args: stop.set())
+        command = [sys.executable, '-m', 'app.worker', '--no-reload']
+        logger.info('Worker reload enabled; watching app Python files and .env')
+        # A fresh interpreter reloads settings and the supervisor itself, not just collectors.
+        process = subprocess.Popen(command, cwd=PROJECT_ROOT, stdin=subprocess.DEVNULL,
+                                   start_new_session=True)
+        for changes in watch(PROJECT_ROOT, watch_filter=watch_filter, stop_event=stop,
+                             debounce=1000, step=200, rust_timeout=500, raise_interrupt=False):
+            if stop.is_set():
+                break
+            logger.info('Worker files changed count=%s; restarting after graceful shutdown', len(changes))
+            stop_reload_process(process)
+            process = None
+            if stop.is_set():
+                break
+            process = subprocess.Popen(command, cwd=PROJECT_ROOT, stdin=subprocess.DEVNULL,
+                                       start_new_session=True)
+    finally:
+        try:
+            stop_reload_process(process)
+        finally:
+            for sig, handler in previous_handlers.items():
+                signal.signal(sig, handler)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Run and supervise all HK Hub background workers')
     parser.add_argument('--check', action='store_true', help='Check supervised child processes and exit')
+    parser.add_argument('--reload', dest='reload', action='store_true',
+                        help='Restart on Python code or .env changes (local development only)')
+    parser.add_argument('--no-reload', dest='reload', action='store_false',
+                        help='Disable file watching')
+    parser.set_defaults(reload=False)
     args = parser.parse_args()
     if args.check:
         raise SystemExit(0 if check_health() else 1)
+    if args.reload and settings.environment != 'local':
+        parser.error('--reload is only allowed when ENVIRONMENT=local; use --no-reload otherwise')
     logging.basicConfig(level=settings.log_level,
                         format='%(asctime)s %(name)s %(levelname)s %(message)s')
     try:
-        asyncio.run(run())
+        if args.reload:
+            run_reload()
+        else:
+            asyncio.run(run())
+    except ImportError:
+        logger.error('Worker reload dependency missing; run ./cmd.sh init to install development dependencies')
+        raise SystemExit(1)
     except (OSError, RuntimeError):
         logger.exception('Worker supervisor failed')
         raise SystemExit(1)

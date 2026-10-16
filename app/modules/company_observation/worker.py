@@ -13,7 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
 from app.core.database import dispose_engine, get_engine
-from app.modules.company_observation.analysis import analyse_report
+from app.modules.company_observation.analysis import ModelCompletionError, analyse_report
 from app.modules.company_observation.analysis_jobs import BudgetExceeded, claim_report, fail_report
 from app.modules.company_observation.calendar import period_end
 from app.modules.company_observation.sources import (
@@ -21,6 +21,7 @@ from app.modules.company_observation.sources import (
 )
 from app.modules.company_observation.storage import (
     build_snapshots, claim_collection, finish_collection, renew_collection, save_source,
+    stored_source, stored_source_ids,
 )
 
 logger = logging.getLogger('hkhub.company.worker')
@@ -68,19 +69,31 @@ async def collect_sources(client: httpx.AsyncClient, stop: asyncio.Event) -> Non
         # Liquidations are independent and must not wait for historical company backfill.
         await collect_liquidations(client, token)
         resources = await discover(client)
+        stored = stored_source_ids()
+        skipped = sum(resource.id in stored for resource in resources)
+        logger.info('Company sources checked resources=%s stored=%s missing=%s',
+                    len(resources), skipped, len(resources) - skipped)
         for resource in resources:
             if stop.is_set():
                 error_code = 'collection_interrupted'
                 return
+            if resource.id in stored:
+                continue
             renew_collection(token)
             try:
-                body = await download(client, resource.url)
+                saved = stored_source(resource.id)
+                if saved is None:
+                    body = await download(client, resource.url)
+                else:
+                    resource, body = saved['resource'], saved['body']
+                    logger.info('Company source reparsing stored CSV resource=%s', resource.id)
                 try:
                     records, diagnostics, status = parse_companies(body, resource)
                 except (ValueError, UnicodeError) as error:
                     records, diagnostics, status = [], {'reason_code': 'source_invalid'}, 'invalid'
                     logger.warning('Company source invalid resource=%s type=%s', resource.id, type(error).__name__)
-                save_source(resource, body, records, diagnostics, status, token)
+                save_source(resource, body, records, diagnostics, status, token,
+                            fetched_at=saved['fetched_at'] if saved else None)
             except (httpx.HTTPError, ValueError) as error:
                 error_code = 'source_unavailable'
                 logger.warning('Company collection failed resource=%s type=%s', resource.id, type(error).__name__)
@@ -95,6 +108,8 @@ async def collect_sources(client: httpx.AsyncClient, stop: asyncio.Event) -> Non
 
 def analysis_failure(error: Exception) -> tuple[str, str]:
     """Keep diagnostics bounded and never log credentials, response bodies or AI input."""
+    if isinstance(error, ModelCompletionError):
+        return error.code, f'finish_reason={error.finish_reason}'
     if isinstance(error, (httpx.TimeoutException, asyncio.TimeoutError)):
         return 'analysis_timeout', type(error).__name__
     if isinstance(error, httpx.HTTPStatusError):
@@ -111,7 +126,7 @@ def analysis_failure(error: Exception) -> tuple[str, str]:
         kinds = sorted({item['type'] for item in error.errors(include_input=False,
                                                                include_context=False, include_url=False)})
         return 'analysis_schema_invalid', f'validation_count={error.error_count()} types={",".join(kinds)}'
-    known = {'analysis_response_too_large', 'analysis_truncated', 'analysis_merge_limit',
+    known = {'analysis_response_too_large', 'analysis_invalid_envelope', 'analysis_truncated', 'analysis_merge_limit',
              'analysis_metric_invalid', 'analysis_population_invalid', 'analysis_batch_incomplete',
              'analysis_evidence_invalid', 'analysis_merge_invalid', 'analysis_lease_lost', 'analysis_invalid'}
     if type(error) is ValueError and str(error) in known:

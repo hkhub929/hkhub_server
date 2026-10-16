@@ -2,6 +2,7 @@
 import hashlib
 import json
 import unicodedata
+from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -11,7 +12,7 @@ from app.core.database import get_engine
 from app.modules.company_observation.calendar import expected_weeks, periods_since
 from app.modules.company_observation.sources import PARSER_VERSION, Resource
 
-ANALYSIS_VERSION = 'name-keywords-v1'
+ANALYSIS_VERSION = 'name-keywords-registration-v2'
 
 
 def normalize(value: str) -> str:
@@ -53,8 +54,31 @@ def finish_collection(token: str, resources: list[Resource] | None, error: str |
         '''), {'token': token, 'error': error, 'payload': payload})
 
 
+def stored_source_ids() -> set[str]:
+    """Reuse stored files for the current parser, including saved partial/invalid diagnostics."""
+    with get_engine().connect() as conn:
+        rows = conn.execute(text('''SELECT DISTINCT resource_id FROM company_source_files
+            WHERE parser_version=:version
+        '''), {'version': PARSER_VERSION}).scalars().all()
+    return set(rows)
+
+
+def stored_source(resource_id: str) -> dict | None:
+    """Read one saved CSV at a time for parser upgrades without fetching it again."""
+    with get_engine().connect() as conn:
+        row = conn.execute(text('''SELECT source_url, coverage_start, coverage_end_exclusive,
+                published_date, fetched_at, raw_content FROM company_source_files
+            WHERE resource_id=:resource ORDER BY fetched_at DESC LIMIT 1
+        '''), {'resource': resource_id}).mappings().first()
+    if row is None:
+        return None
+    return {'resource': Resource(resource_id, row['source_url'], row['coverage_start'],
+                                row['coverage_end_exclusive'], row['published_date']),
+            'body': bytes(row['raw_content']), 'fetched_at': row['fetched_at']}
+
+
 def save_source(resource: Resource, body: bytes, records: list[dict], diagnostics: dict,
-                status: str, token: str) -> None:
+                status: str, token: str, *, fetched_at: datetime | None = None) -> None:
     digest, file_id = hashlib.sha256(body).hexdigest(), str(uuid4())
     with get_engine().begin() as conn:
         owner = conn.execute(text('''SELECT name FROM company_worker_state
@@ -65,14 +89,15 @@ def save_source(resource: Resource, body: bytes, records: list[dict], diagnostic
         inserted = conn.execute(text('''
             INSERT INTO company_source_files(id, resource_id, source_url, coverage_start,
                 coverage_end_exclusive, content_sha256, raw_content, parser_version,
-                published_date, status, diagnostics)
+                published_date, status, diagnostics, fetched_at)
             VALUES (:id, :resource, :url, :start, :end, :sha, :raw, :parser,
-                :published, :status, CAST(:diagnostics AS jsonb))
+                :published, :status, CAST(:diagnostics AS jsonb),
+                COALESCE(CAST(:fetched_at AS timestamptz), now()))
             ON CONFLICT(resource_id, content_sha256, parser_version) DO NOTHING RETURNING id
         '''), {'id': file_id, 'resource': resource.id, 'url': resource.url, 'start': resource.start,
               'end': resource.end, 'sha': digest, 'raw': body, 'parser': PARSER_VERSION,
               'published': resource.published_date, 'status': status,
-              'diagnostics': json.dumps(diagnostics)}).first()
+              'diagnostics': json.dumps(diagnostics), 'fetched_at': fetched_at}).first()
         if inserted and records:
             conn.execute(text('''
                 INSERT INTO company_source_records(source_file_id, row_locator, company_key,
@@ -114,14 +139,15 @@ def source_info(file: dict) -> dict:
             'coverage_end_exclusive': file['coverage_end_exclusive'].isoformat(),
             'fetched_at': file['fetched_at'].isoformat(),
             'published_date': file['published_date'].isoformat() if file['published_date'] else None,
-            'status': file['status']}
+            'status': file['status'], 'date_semantics': file['diagnostics'].get('date_semantics')}
 
 
 def snapshot_companies(conn, selected: list[dict], start, end) -> tuple[dict, bool]:
     companies, conflict = {}, False
     for file in selected:
         rows = conn.execute(text('''SELECT id, company_key, name_en, name_zh, incorporation_date
-            FROM company_source_records WHERE source_file_id=:file AND event_type='incorporation'
+            FROM company_source_records WHERE source_file_id=:file
+                AND event_type IN ('incorporation', 'incorporation_or_redomiciliation')
                 AND error_code IS NULL AND incorporation_date>=:start AND incorporation_date<:end
             ORDER BY row_locator
         '''), {'file': file['id'], 'start': start, 'end': end}).mappings()

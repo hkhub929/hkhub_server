@@ -7,6 +7,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import get_engine
 from app.modules.company_observation.calendar import today
+from app.modules.company_observation.storage import ANALYSIS_VERSION
 
 
 class BudgetExceeded(ValueError):
@@ -22,16 +23,17 @@ def claim_report() -> dict | None:
     with get_engine().begin() as conn:
         conn.execute(text('''UPDATE company_period_reports SET analysis_status='pending'
             WHERE is_current AND data_status='complete' AND observed_company_count>0
-            AND analysis_status='not_configured'
-        '''))
+            AND analysis_status='not_configured' AND analysis_version=:version
+        '''), {'version': ANALYSIS_VERSION})
         row = conn.execute(text('''SELECT * FROM company_period_reports WHERE is_current
-            AND data_status='complete' AND observed_company_count>0
+            AND data_status='complete' AND observed_company_count>0 AND analysis_version=:version
             AND attempt_count<:max_attempts AND (retry_after IS NULL OR retry_after<now())
             AND (analysis_status IN ('pending', 'failed') OR
                 (analysis_status='running' AND lease_until<now()))
             ORDER BY CASE WHEN period_type='month' THEN 0 WHEN period_type='week' THEN 1 ELSE 2 END,
                 start_date DESC LIMIT 1 FOR UPDATE SKIP LOCKED
-        '''), {'max_attempts': settings.company_observation_max_analysis_attempts}).mappings().first()
+        '''), {'max_attempts': settings.company_observation_max_analysis_attempts,
+               'version': ANALYSIS_VERSION}).mappings().first()
         if not row:
             return None
         conn.execute(text('''UPDATE company_period_reports SET analysis_status='running',

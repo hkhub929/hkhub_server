@@ -24,6 +24,7 @@ class Source(BaseModel):
     fetched_at: datetime
     published_date: date | None = None
     status: str
+    date_semantics: Literal['incorporation', 'incorporation_or_redomiciliation'] | None = None
 
 
 class Period(BaseModel):
@@ -33,6 +34,7 @@ class Period(BaseModel):
     end_date_exclusive: date
     timezone: str = 'Asia/Hong_Kong'
     calendar_ended: bool = True
+    population_scope: Literal['incorporation', 'incorporation_and_redomiciliation']
     data_status: DataStatus
     analysis_status: AnalysisStatus
     error_code: str | None = None
@@ -85,13 +87,17 @@ class Company(BaseModel):
     identifier_value: str
     name_en: str
     name_zh: str
-    incorporation_date: date
+    incorporation_date: date = Field(
+        description='Legacy alias for registration_date; may be a re-domiciliation date')
+    registration_date: date = Field(description='Official incorporation or re-domiciliation event date')
+    event_type: Literal['incorporation', 'incorporation_or_redomiciliation']
     evidence: list[dict[str, str]]
     source: Source
 
 
 class CompaniesResponse(BaseModel):
     report_id: UUID
+    population_scope: Literal['incorporation', 'incorporation_and_redomiciliation']
     items: list[Company]
     next_cursor: str | None = None
 

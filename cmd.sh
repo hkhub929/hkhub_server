@@ -14,7 +14,8 @@ Usage: ./cmd.sh [command] [args]
   api, dev (default)   Apply migrations and start API at http://localhost:8000
   serve                Start API without reload or automatic migrations
                        api, dev and serve stop any process already listening on API_PORT first
-  worker               Apply migrations and supervise all background collectors
+  worker               Apply migrations and supervise all background collectors with reload
+                       Use worker --no-reload to disable local file watching
   db:up                Start project-owned PostgreSQL on 5433 and create database if needed
   db:down              Stop only project-owned PostgreSQL; preserve its data
   db:check             Verify configured PostgreSQL connection, port and version
@@ -31,6 +32,8 @@ Usage: ./cmd.sh [command] [args]
 Local API runs directly in .venv; local PostgreSQL is native, never containerized.
 init, API and worker commands never start the database. Run db:up separately first.
 Run worker in one terminal alongside the API; Ctrl+C stops all background collectors.
+Worker reload watches app/**/*.py and .env; it waits for graceful shutdown before restart.
+Reload is local-only; production runs python -m app.worker without --reload.
 db:up/db:down manage only ENVIRONMENT=local + localhost:5433 project-owned targets.
 Managed data lives in .local/postgresql (excluded from Git/images).
 Install native PostgreSQL first, or configure POSTGRES_BIN_DIR.
@@ -181,7 +184,7 @@ case "$command" in
     ;;
   worker)
     migrate apply
-    exec "$PYTHON" -m app.worker "$@"
+    exec "$PYTHON" -m app.worker --reload "$@"
     ;;
   db:up)
     local_database up

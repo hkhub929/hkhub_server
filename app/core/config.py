@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     company_observation_max_download_bytes: int = Field(default=8388608, ge=65536, le=33554432)
     company_observation_max_source_rows: int = Field(default=30000, ge=1000, le=100000)
     company_observation_batch_size: int = Field(default=100, ge=10, le=150)
-    company_observation_daily_call_limit: int = Field(default=40, ge=0, le=1000)
+    company_observation_daily_call_limit: int = Field(default=200, ge=0, le=1000)
     company_observation_report_call_limit: int = Field(default=400, ge=0, le=5000)
     company_observation_max_analysis_attempts: int = Field(default=3, ge=1, le=5)
 

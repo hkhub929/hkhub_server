@@ -15,7 +15,7 @@ from app.core.config import settings
 CATALOG = 'https://data.gov.hk/en-data/api/3/action/package_show'
 DATASET = 'hk-cr-crdata-list-newly-registered-companies-2526'
 LIQUIDATIONS = 'https://www.cr.gov.hk/datagovhk/psi/statistics_05.csv'
-PARSER_VERSION = 'cr-utf8-v1'
+PARSER_VERSION = 'cr-utf8-registration-v2'
 COMMON_COLUMNS = ['Seq', 'Current Company Name in English', 'Current Company Name in Chinese',
                   'BR Number']
 COMBINED_COLUMN = 'Date of Incorporation / Re-domiciliation Date'
@@ -108,7 +108,9 @@ def parse_companies(body: bytes, resource: Resource) -> tuple[list[dict], dict, 
         raise ValueError('schema_invalid')
     combined = header[4] == COMBINED_COLUMN
     records, stats = [], {'raw_rows': 0, 'valid_rows': 0, 'excluded_rows': 0,
-                          'ambiguous_rows': 0, 'invalid_rows': 0, 'duplicate_rows': 0}
+                          'ambiguous_rows': 0, 'invalid_rows': 0, 'duplicate_rows': 0,
+                          'date_semantics': 'incorporation_or_redomiciliation' if combined else 'incorporation',
+                          'population_scope': 'incorporation_and_redomiciliation'}
     seen = set()
     for index, row in enumerate(rows[1:], 2):
         if not any(value.strip() for value in row):
@@ -116,8 +118,8 @@ def parse_companies(body: bytes, resource: Resource) -> tuple[list[dict], dict, 
         stats['raw_rows'] += 1
         record = parse_company_row(row, index, resource, combined)
         if record['error_code']:
-            key = 'ambiguous_rows' if record['error_code'] == 'incorporation_or_redomiciliation' else 'invalid_rows'
-        elif record['event_type'] == 'incorporation':
+            key = 'invalid_rows'
+        elif record['event_type'] in ('incorporation', 'incorporation_or_redomiciliation'):
             key = 'valid_rows'
         else:
             key = 'excluded_rows'
@@ -127,10 +129,9 @@ def parse_companies(body: bytes, resource: Resource) -> tuple[list[dict], dict, 
             stats['duplicate_rows'] += 1
         seen.add(identity)
         records.append(record)
-    # Combined date semantics cannot establish the requested population, even for zero rows.
-    status = 'partial' if combined or stats['invalid_rows'] else 'complete'
-    stats['reason_code'] = 'incorporation_or_redomiciliation' if combined else (
-        'source_invalid' if stats['invalid_rows'] else None)
+    # Combined dates establish the combined population, not separate incorporation counts.
+    status = 'partial' if stats['invalid_rows'] else 'complete'
+    stats['reason_code'] = 'source_invalid' if stats['invalid_rows'] else None
     return records, stats, status
 
 
@@ -150,10 +151,9 @@ def parse_company_row(row: list[str], index: int, resource: Resource, combined: 
             if value and not resource.start <= source_date(value) < resource.end:
                 raise ValueError('date_outside_coverage')
         if incorporation:
-            if combined:
-                record['event_type'] = 'incorporation_or_redomiciliation'
-                raise ValueError('incorporation_or_redomiciliation')
-            record.update(incorporation_date=source_date(incorporation), event_type='incorporation')
+            # Legacy database column stores the official event date, not necessarily company creation.
+            record.update(incorporation_date=source_date(incorporation),
+                          event_type='incorporation_or_redomiciliation' if combined else 'incorporation')
         elif changed:
             record['event_type'] = 'name_change'
         else:
