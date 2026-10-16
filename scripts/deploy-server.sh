@@ -10,21 +10,24 @@ SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="/srv/apps/hkhub/prod/server/api"
 DATA_DIR="/srv/data/hkhub/prod/server/api"
 SERVER_ENV_FILE="$DATA_DIR/server.env"
+POSTGRES_DIR="/srv/data/hkhub/prod/shared/postgresql"
+POSTGRES_ENV_FILE="$POSTGRES_DIR/postgres.env"
 COMPOSE_PROJECT="hkhub-prod-api"
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 
 [[ "$RELEASE_ID" =~ ^[a-f0-9]{40}-[0-9]+-[0-9]+$ ]] || fail 'Invalid release ID.'
 [[ "$APPLY_MIGRATIONS" == true || "$APPLY_MIGRATIONS" == false ]] || fail 'Invalid migration choice.'
-[[ -f "$SOURCE_DIR/.envprod" && -f "$SOURCE_DIR/Dockerfile" && -f "$SOURCE_DIR/docker-compose.prod.yml" ]] || fail 'Source archive is incomplete.'
+[[ -f "$SOURCE_DIR/.env.prod" && -f "$SOURCE_DIR/Dockerfile" && -f "$SOURCE_DIR/docker-compose.prod.yml" ]] || fail 'Source archive is incomplete.'
 # Only committed public configuration is sourced. Secrets are parsed as JSON below.
 set -a
-. "$SOURCE_DIR/.envprod"
+. "$SOURCE_DIR/.env.prod"
 set +a
 # Let each release.env control its own port/image, including when restoring an older release.
-export -n API_HOST_PORT SERVER_IMAGE SERVER_ENV_FILE
+export -n API_HOST_PORT SERVER_IMAGE SERVER_ENV_FILE POSTGRES_ENV_FILE
 [[ -z "${DATABASE_URL:-}" ]] || fail 'DATABASE_URL must come from GitHub Secrets, not public configuration or the host environment.'
 [[ -z "${DEEPSEEK_API_KEY:-}" ]] || fail 'DEEPSEEK_API_KEY must come from GitHub Secrets, not public configuration or the host environment.'
+[[ -z "${POSTGRES_PASSWORD:-}" ]] || fail 'POSTGRES_PASSWORD must come from GitHub Secrets, not public configuration or the host environment.'
 [[ "$API_HOST_PORT" =~ ^[0-9]{2,5}$ ]] || fail 'Invalid host port.'
 (( 10#$API_HOST_PORT >= 1024 && 10#$API_HOST_PORT <= 65535 )) || fail 'Host port must be between 1024 and 65535.'
 [[ "$SERVER_IMAGE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail 'Invalid local image name.'
@@ -35,7 +38,7 @@ docker compose version >/dev/null
 # Consume stdin before any Docker command can consume it. Values are never logged or sourced.
 SECRET_PAYLOAD=""
 IFS= read -r SECRET_PAYLOAD || [[ -n "$SECRET_PAYLOAD" ]] || fail 'Secret payload is missing.'
-mkdir -p "$APP_DIR/releases" "$DATA_DIR"
+mkdir -p "$APP_DIR/releases" "$DATA_DIR" "$POSTGRES_DIR/data"
 exec 9>"$APP_DIR/deploy.lock"
 flock -w 600 9 || fail 'Another HK Hub deployment is still running.'
 RELEASE_DIR="$APP_DIR/releases/$RELEASE_ID"
@@ -60,37 +63,76 @@ fi
 
 staged_env="$DATA_DIR/.server-env-$RELEASE_ID"
 backup_env="$DATA_DIR/.server-env-backup-$RELEASE_ID"
-trap 'rm -f "$staged_env" "$backup_env"' EXIT
+staged_postgres_env="$POSTGRES_DIR/.postgres-env-$RELEASE_ID"
+bootstrap_sql="$POSTGRES_DIR/.bootstrap-$RELEASE_ID.sql"
+trap 'rm -f "$staged_env" "$backup_env" "$staged_postgres_env" "$bootstrap_sql"' EXIT
 # Emit only known runtime settings, without deployment target variables or shell expansion.
 printf '%s' "$SECRET_PAYLOAD" | python3 -c '
 import json, os, sys
+from urllib.parse import unquote, urlsplit
 try:
     secrets = json.load(sys.stdin)
-    if set(secrets) != {"DATABASE_URL", "DEEPSEEK_API_KEY"}:
+    if set(secrets) != {"DATABASE_URL", "POSTGRES_PASSWORD", "DEEPSEEK_API_KEY"}:
         raise ValueError()
     if not isinstance(secrets["DEEPSEEK_API_KEY"], str):
         raise ValueError()
     database_url = secrets["DATABASE_URL"]
     if not isinstance(database_url, str) or not database_url.startswith(("postgresql+psycopg2://", "postgresql://")):
         raise ValueError()
+    url = urlsplit(database_url)
+    if (url.hostname != "postgres" or url.port not in (None, 5432)
+            or unquote(url.username or "") != "hkhub" or url.path != "/hkhub"
+            or url.query or url.fragment):
+        raise ValueError()
+    app_password = unquote(url.password or "")
+    admin_password = secrets["POSTGRES_PASSWORD"]
+    if (not isinstance(admin_password, str) or not admin_password.strip()
+            or not app_password.strip() or app_password == admin_password):
+        raise ValueError()
+    if any(character in app_password for character in ("\r", "\n", "\x00")):
+        raise ValueError()
     keys = ("APP_NAME", "VERSION", "ENVIRONMENT", "API_PREFIX", "DEBUG", "LOG_LEVEL",
             "CORS_ORIGINS", "DATABASE_POOL_SIZE",
             "DATABASE_MAX_OVERFLOW", "UPSTREAM_TIMEOUT_SECONDS", "DEEPSEEK_BASE_URL",
             "DEEPSEEK_MODEL", "DEEPSEEK_TIMEOUT_SECONDS")
     values = {key: os.environ[key] for key in keys}
-    values.update(secrets)
-    if any(any(character in value for character in ("\r", "\n", "\x00")) for value in values.values()):
+    values.update({key: secrets[key] for key in ("DATABASE_URL", "DEEPSEEK_API_KEY")})
+    postgres_values = {"POSTGRES_USER": "postgres", "POSTGRES_DB": "postgres",
+                       "POSTGRES_PASSWORD": admin_password,
+                       "POSTGRES_HOST_AUTH_METHOD": "scram-sha-256"}
+    if any(any(character in value for character in ("\r", "\n", "\x00")) for value in (*values.values(), *postgres_values.values())):
         raise ValueError()
 except (ValueError, KeyError, TypeError):
     sys.exit("Invalid production configuration or secrets (values redacted).")
 quote = chr(39)
-for key, value in values.items():
-    # Compose dotenv single quotes prevent dollar interpolation in credentials.
-    escaped = value.replace(quote, chr(92) + quote)
-    print(key + "=" + quote + escaped + quote)
-' > "$staged_env"
+def dotenv(values):
+    return "".join(key + "=" + quote + value.replace(quote, chr(92) + quote)
+                   + quote + "\n" for key, value in values.items())
+print(dotenv(values), end="")
+with open(sys.argv[1], "w", encoding="utf-8") as file:
+    file.write(dotenv(postgres_values))
+# Execute as the container-local postgres OS user; no admin secret enters the API.
+# Existing roles/passwords are untouched. Credential rotation is a separate operation.
+literal = quote + app_password.replace(quote, quote + quote) + quote
+statement = "CREATE ROLE hkhub LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD " + literal
+with open(sys.argv[2], "w", encoding="utf-8") as file:
+    file.write("SET standard_conforming_strings = on;\n")
+    file.write("SELECT " + quote + statement.replace(quote, quote + quote) + quote
+               + " WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = "
+               + quote + "hkhub" + quote + ")\\gexec\n")
+    file.write("SELECT " + quote + "CREATE DATABASE hkhub OWNER hkhub" + quote
+               + " WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = "
+               + quote + "hkhub" + quote + ")\\gexec\n")
+' "$staged_postgres_env" "$bootstrap_sql" > "$staged_env"
 unset SECRET_PAYLOAD
-chmod 600 "$staged_env"
+chmod 600 "$staged_env" "$staged_postgres_env" "$bootstrap_sql"
+# PostgreSQL image env applies only at initialization. Do not silently rotate it.
+if [[ -f "$POSTGRES_ENV_FILE" ]]; then
+  cmp -s "$staged_postgres_env" "$POSTGRES_ENV_FILE" || fail 'PostgreSQL initialization settings changed. Rotate database credentials separately before deployment.'
+else
+  [[ -z "$(find "$POSTGRES_DIR/data" -mindepth 1 -maxdepth 1 -print -quit)" ]] || fail 'Existing PostgreSQL data has no initialization metadata. Review it before deployment.'
+  mv "$staged_postgres_env" "$POSTGRES_ENV_FILE"
+fi
 
 # Build from this exact source release while the existing API keeps serving.
 mkdir "$RELEASE_DIR"
@@ -99,8 +141,8 @@ SERVER_IMAGE="$SERVER_IMAGE_NAME:$RELEASE_ID"
 docker build --file "$RELEASE_DIR/Dockerfile" --tag "$SERVER_IMAGE" "$RELEASE_DIR"
 # Pin the local content; deployment and rollback never need a registry.
 SERVER_IMAGE="$(docker image inspect --format '{{.Id}}' "$SERVER_IMAGE")"
-printf 'SERVER_IMAGE=%s\nSERVER_ENV_FILE=%s\nAPI_HOST_PORT=%s\n' \
-  "$SERVER_IMAGE" "$SERVER_ENV_FILE" "$API_HOST_PORT" > "$RELEASE_DIR/release.env"
+printf 'SERVER_IMAGE=%s\nSERVER_ENV_FILE=%s\nAPI_HOST_PORT=%s\nPOSTGRES_ENV_FILE=%s\n' \
+  "$SERVER_IMAGE" "$SERVER_ENV_FILE" "$API_HOST_PORT" "$POSTGRES_ENV_FILE" > "$RELEASE_DIR/release.env"
 chmod 600 "$RELEASE_DIR/release.env"
 
 compose_release() {
@@ -159,8 +201,21 @@ rollback_on_error() {
     if [[ -n "$previous_release" && -n "$previous_image" ]]; then
       SERVER_IMAGE="$previous_image" docker compose --project-name "$COMPOSE_PROJECT" \
         --env-file "$previous_release/release.env" -f "$previous_release/docker-compose.prod.yml" \
-        up -d --no-build --pull never --no-deps --remove-orphans
-      if [[ $? == 0 ]] && wait_until_ready "$previous_release"; then
+        up -d --no-build --pull never --no-deps server
+      rollback_status=$?
+      if [[ $rollback_status == 0 ]]; then
+        previous_services="$(docker compose --project-name "$COMPOSE_PROJECT" \
+          --env-file "$previous_release/release.env" -f "$previous_release/docker-compose.prod.yml" config --services)"
+        if grep -qx 'commute-worker' <<< "$previous_services"; then
+          SERVER_IMAGE="$previous_image" docker compose --project-name "$COMPOSE_PROJECT" \
+            --env-file "$previous_release/release.env" -f "$previous_release/docker-compose.prod.yml" \
+            up -d --no-build --pull never --no-deps commute-worker
+          rollback_status=$?
+        else
+          compose_release stop commute-worker
+        fi
+      fi
+      if [[ $rollback_status == 0 ]] && wait_until_ready "$previous_release"; then
         switch_current "$previous_release"
         printf 'Previous API image and configuration restored and ready.\n' >&2
       else
@@ -182,6 +237,14 @@ if [[ -f "$SERVER_ENV_FILE" ]]; then
 fi
 mv -f "$staged_env" "$SERVER_ENV_FILE"
 configuration_installed=true
+# Bootstrap once, then start/reuse the existing DB without recreating or upgrading it.
+compose_release up -d --no-recreate --wait --wait-timeout 150 postgres
+if ! compose_release exec -T --user postgres postgres psql --set ON_ERROR_STOP=on --dbname=postgres \
+  < "$bootstrap_sql" > /dev/null 2>&1; then
+  printf 'Database bootstrap failed (credentials redacted). PostgreSQL data is preserved.\n' >&2
+  false
+fi
+rm -f "$bootstrap_sql"
 # Migrations need explicit approval and must remain compatible with the previous API.
 if [[ "$APPLY_MIGRATIONS" == true ]]; then
   compose_release run --rm --no-deps server python -m app.core.migrations apply
@@ -198,4 +261,5 @@ fi
 switch_current "$RELEASE_DIR"
 trap - ERR
 printf 'HK Hub API deployed: release=%s port=%s image=%s\n' "$RELEASE_ID" "$API_HOST_PORT" "$SERVER_IMAGE"
-# Keep previous releases/images for application rollback. Never clean /srv/data or manage PostgreSQL/Nginx.
+# Keep previous releases/images for application rollback. Never clean /srv/data,
+# remove/recreate PostgreSQL, run compose down, or manage host PostgreSQL/Nginx.

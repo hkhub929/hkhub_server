@@ -11,7 +11,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "zh-Hans": {
         "service_alive": "服务运行正常",
         "service_ready": "API 与数据库已就绪",
-        "home_tools_unavailable": "工具入口暂时无法加载，请稍后重试。",
         "education_not_configured": "升学 AI 服务尚未配置，请联系管理员。",
         "education_unavailable": "升学 AI 服务暂时不可用，请稍后重试。",
         "education_timeout": "分析等待超时，填写内容已保留，请稍后重试。",
@@ -36,7 +35,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "zh-Hant": {
         "service_alive": "服務運行正常",
         "service_ready": "API 與數據庫已就緒",
-        "home_tools_unavailable": "工具入口暫時無法載入，請稍後重試。",
         "education_not_configured": "升學 AI 服務尚未設定，請聯絡管理員。",
         "education_unavailable": "升學 AI 服務暫時無法使用，請稍後重試。",
         "education_timeout": "分析等候逾時，填寫內容已保留，請稍後重試。",
@@ -61,7 +59,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "yue-Hant-HK": {
         "service_alive": "服務運行正常",
         "service_ready": "API 同數據庫都準備好喇",
-        "home_tools_unavailable": "暫時載入唔到工具入口，請遲啲再試。",
         "education_not_configured": "升學 AI 服務未設定，請聯絡管理員。",
         "education_unavailable": "升學 AI 服務暫時用唔到，請遲啲再試。",
         "education_timeout": "分析等候逾時，填寫內容已保留，請遲啲再試。",
@@ -86,7 +83,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "en": {
         "service_alive": "Service is running",
         "service_ready": "API and database are ready",
-        "home_tools_unavailable": "Tools cannot be loaded right now. Please try again later.",
         "education_not_configured": "The education AI service is not configured. Contact the administrator.",
         "education_unavailable": "The education AI service is unavailable. Please try again later.",
         "education_timeout": "Analysis timed out. Your form is kept; please try again later.",

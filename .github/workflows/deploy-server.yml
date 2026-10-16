@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       apply_migrations:
-        description: Apply SQL migrations before deployment (database must already exist)
+        description: Apply SQL migrations before activation (required for the first deployment)
         type: boolean
         default: false
 
@@ -31,16 +31,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          . ./.envprod
+          . ./.env.prod
           [[ "$SERVER_HOST" != your-server-host && "$SERVER_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || {
-            printf 'Configure SERVER_HOST in .envprod\n' >&2; exit 1;
+            printf 'Configure SERVER_HOST in .env.prod\n' >&2; exit 1;
           }
           [[ "$SERVER_USER" != your-server-user && "$SERVER_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || {
-            printf 'Configure SERVER_USER in .envprod\n' >&2; exit 1;
+            printf 'Configure SERVER_USER in .env.prod\n' >&2; exit 1;
           }
           [[ "$SERVER_SSH_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$SERVER_SSH_PORT >= 1 && 10#$SERVER_SSH_PORT <= 65535 ))
           [[ -n "$SERVER_SSH_KNOWN_HOSTS" ]] || {
-            printf 'Set a verified SERVER_SSH_KNOWN_HOSTS entry in .envprod\n' >&2; exit 1;
+            printf 'Set a verified SERVER_SSH_KNOWN_HOSTS entry in .env.prod\n' >&2; exit 1;
           }
           printf 'host=%s\nuser=%s\nport=%s\n' "$SERVER_HOST" "$SERVER_USER" "$SERVER_SSH_PORT" >> "$GITHUB_OUTPUT"
 
@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git archive --format=tar HEAD \
-            .envprod .dockerignore Dockerfile pyproject.toml app db/migrations \
+            .env.prod .dockerignore Dockerfile pyproject.toml app db/migrations \
             docker-compose.prod.yml scripts/deploy-server.sh \
             | gzip -c > "$RUNNER_TEMP/hkhub-server-runtime-$release_id.tar.gz"
 
@@ -62,16 +62,17 @@ jobs:
           SERVER_SSH_PORT: ${{ steps.target.outputs.port }}
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           APPLY_MIGRATIONS: ${{ inputs.apply_migrations }}
         run: |
           set -euo pipefail
           umask 077
-          [[ -n "$SERVER_SSH_KEY" && -n "$DATABASE_URL" ]] || {
-            printf 'Configure SERVER_SSH_KEY and DATABASE_URL in GitHub Actions Secrets\n' >&2; exit 1;
+          [[ -n "$SERVER_SSH_KEY" && -n "$DATABASE_URL" && -n "$POSTGRES_PASSWORD" ]] || {
+            printf 'Configure SERVER_SSH_KEY, DATABASE_URL and POSTGRES_PASSWORD in GitHub Actions Secrets\n' >&2; exit 1;
           }
           # Only load the public host-key entry, never source secret values as shell code.
-          SERVER_SSH_KNOWN_HOSTS="$( . ./.envprod; printf '%s' "$SERVER_SSH_KNOWN_HOSTS" )"
+          SERVER_SSH_KNOWN_HOSTS="$( . ./.env.prod; printf '%s' "$SERVER_SSH_KNOWN_HOSTS" )"
           release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           key_dir="$RUNNER_TEMP/hkhub-ssh-$release_id"
           archive="$RUNNER_TEMP/hkhub-server-runtime-$release_id.tar.gz"
@@ -82,7 +83,7 @@ jobs:
           printf '%s\n' "$SERVER_SSH_KEY" > "$key_dir/id"
           printf '%s\n' "$SERVER_SSH_KNOWN_HOSTS" > "$key_dir/known_hosts"
           # JSON preserves special characters. The payload travels over SSH stdin, not in arguments/archive.
-          python3 -c 'import json, os, sys; json.dump({"DATABASE_URL": os.environ["DATABASE_URL"], "DEEPSEEK_API_KEY": os.environ.get("DEEPSEEK_API_KEY", "")}, sys.stdout)' > "$key_dir/secrets.json"
+          python3 -c 'import json, os, sys; json.dump({"DATABASE_URL": os.environ["DATABASE_URL"], "POSTGRES_PASSWORD": os.environ["POSTGRES_PASSWORD"], "DEEPSEEK_API_KEY": os.environ.get("DEEPSEEK_API_KEY", "")}, sys.stdout)' > "$key_dir/secrets.json"
           chmod 600 "$key_dir/id" "$key_dir/known_hosts" "$key_dir/secrets.json"
           ssh_options=(-i "$key_dir/id" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=$key_dir/known_hosts" -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)

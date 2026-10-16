@@ -1,4 +1,4 @@
-# API and independent collection worker. PostgreSQL remains independently managed.
+# Three independent containers in one Compose project and private default network.
 services:
   server:
     image: ${SERVER_IMAGE:?SERVER_IMAGE is required}
@@ -9,8 +9,9 @@ services:
       DEBUG: "false"
     ports:
       - "127.0.0.1:${API_HOST_PORT:?API_HOST_PORT is required}:8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     init: true
     security_opt:
@@ -42,8 +43,9 @@ services:
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     init: true
     security_opt:
@@ -54,6 +56,35 @@ services:
     # The image's HTTP healthcheck belongs to the API, not this background process.
     healthcheck:
       disable: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres:
+    # Keep the major version stable; upgrades require a separate data migration.
+    image: postgres:16-bookworm
+    env_file:
+      - ${POSTGRES_ENV_FILE:?POSTGRES_ENV_FILE is required}
+    volumes:
+      - type: bind
+        source: /srv/data/hkhub/prod/shared/postgresql/data
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+    # No published port: only this project's containers access postgres:5432.
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    healthcheck:
+      # TCP becomes available only after the image's temporary init server exits.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 20
     logging:
       driver: json-file
       options:

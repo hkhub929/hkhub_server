@@ -2,7 +2,7 @@
 .gitignore
 .env
 .env.*
-.envprod
+.env.prod
 **/.env
 **/.env.*
 .local

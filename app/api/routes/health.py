@@ -20,10 +20,10 @@ def health(request: Request) -> dict[str, str]:
 
 @router.get("/ready", response_model=None)
 def readiness(request: Request) -> dict[str, str] | JSONResponse:
-    """Readiness includes database reachability and the initial schema migration."""
+    """Readiness includes database reachability and the commute schema migration."""
     try:
         with get_engine().connect() as connection:
-            connection.execute(text("SELECT key FROM app_settings LIMIT 1"))
+            connection.execute(text("SELECT audience FROM commute_observations LIMIT 1"))
     except Exception as error:
         logger.warning("Readiness check failed type=%s", type(error).__name__)
         return error_response(

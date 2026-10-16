@@ -20,7 +20,7 @@ ENV/
 .env.*
 !.env.example
 # Public production configuration is intentionally versioned.
-!.envprod
+!.env.prod
 
 # --- Tooling caches ---
 .pytest_cache/
