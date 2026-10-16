@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       apply_migrations:
-        description: Apply SQL migrations before activation (required for the first deployment)
+        description: Apply pending Yoyo migrations before activation (enabled by default; required for first deployment)
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
