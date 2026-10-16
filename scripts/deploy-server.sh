@@ -70,40 +70,64 @@ trap 'rm -f "$staged_env" "$backup_env" "$staged_postgres_env" "$bootstrap_sql"'
 printf '%s' "$SECRET_PAYLOAD" | python3 -c '
 import json, os, sys
 from urllib.parse import unquote, urlsplit
+
+def invalid(message):
+    sys.exit("Invalid production configuration: " + message + " (values redacted).")
+
 try:
     secrets = json.load(sys.stdin)
-    if set(secrets) != {"DATABASE_URL", "POSTGRES_PASSWORD", "DEEPSEEK_API_KEY"}:
-        raise ValueError()
-    if not isinstance(secrets["DEEPSEEK_API_KEY"], str):
-        raise ValueError()
-    database_url = secrets["DATABASE_URL"]
-    if not isinstance(database_url, str) or not database_url.startswith(("postgresql+psycopg2://", "postgresql://")):
-        raise ValueError()
+except (ValueError, TypeError):
+    invalid("Secret payload must be valid JSON")
+if not isinstance(secrets, dict) or set(secrets) != {"DATABASE_URL", "POSTGRES_PASSWORD", "DEEPSEEK_API_KEY"}:
+    invalid("Secret payload must contain DATABASE_URL, POSTGRES_PASSWORD and DEEPSEEK_API_KEY")
+for key in ("DATABASE_URL", "POSTGRES_PASSWORD", "DEEPSEEK_API_KEY"):
+    if not isinstance(secrets[key], str):
+        invalid(key + " must be a string")
+    if any(character in secrets[key] for character in ("\r", "\n", "\x00")):
+        invalid(key + " must not contain newlines or NUL; paste only the value")
+database_url = secrets["DATABASE_URL"]
+if not database_url.startswith(("postgresql+psycopg2://", "postgresql://")):
+    invalid("DATABASE_URL must start with postgresql+psycopg2:// or postgresql://; do not include quotes or DATABASE_URL=")
+try:
     url = urlsplit(database_url)
-    if (url.hostname != "postgres" or url.port not in (None, 5432)
-            or unquote(url.username or "") != "hkhub" or url.path != "/hkhub"
-            or url.query or url.fragment):
-        raise ValueError()
-    app_password = unquote(url.password or "")
-    admin_password = secrets["POSTGRES_PASSWORD"]
-    if (not isinstance(admin_password, str) or not admin_password.strip()
-            or not app_password.strip() or app_password == admin_password):
-        raise ValueError()
-    if any(character in app_password for character in ("\r", "\n", "\x00")):
-        raise ValueError()
-    keys = ("APP_NAME", "VERSION", "ENVIRONMENT", "API_PREFIX", "DEBUG", "LOG_LEVEL",
-            "CORS_ORIGINS", "DATABASE_POOL_SIZE",
-            "DATABASE_MAX_OVERFLOW", "UPSTREAM_TIMEOUT_SECONDS", "DEEPSEEK_BASE_URL",
-            "DEEPSEEK_MODEL", "DEEPSEEK_TIMEOUT_SECONDS")
-    values = {key: os.environ[key] for key in keys}
-    values.update({key: secrets[key] for key in ("DATABASE_URL", "DEEPSEEK_API_KEY")})
-    postgres_values = {"POSTGRES_USER": "postgres", "POSTGRES_DB": "postgres",
-                       "POSTGRES_PASSWORD": admin_password,
-                       "POSTGRES_HOST_AUTH_METHOD": "scram-sha-256"}
-    if any(any(character in value for character in ("\r", "\n", "\x00")) for value in (*values.values(), *postgres_values.values())):
-        raise ValueError()
-except (ValueError, KeyError, TypeError):
-    sys.exit("Invalid production configuration or secrets (values redacted).")
+    host, port = url.hostname, url.port
+except ValueError:
+    invalid("DATABASE_URL cannot be parsed; check its port and URL-encode reserved password characters")
+if host != "postgres":
+    invalid("DATABASE_URL host must be postgres, not localhost, 127.0.0.1 or the server IP")
+if port not in (None, 5432):
+    invalid("DATABASE_URL port must be 5432")
+if unquote(url.username or "") != "hkhub":
+    invalid("DATABASE_URL username must be hkhub")
+if url.path != "/hkhub":
+    invalid("DATABASE_URL database must be hkhub; do not include surrounding quotes")
+if url.query or url.fragment:
+    invalid("DATABASE_URL must not contain query parameters or a fragment; URL-encode reserved password characters")
+app_password = unquote(url.password or "")
+admin_password = secrets["POSTGRES_PASSWORD"]
+if not app_password.strip():
+    invalid("DATABASE_URL must contain a non-empty application password")
+if not admin_password.strip():
+    invalid("POSTGRES_PASSWORD must be non-empty")
+if app_password == admin_password:
+    invalid("POSTGRES_PASSWORD must differ from the application password in DATABASE_URL")
+if any(character in app_password for character in ("\r", "\n", "\x00")):
+    invalid("DATABASE_URL decoded application password must not contain newlines or NUL")
+keys = ("APP_NAME", "VERSION", "ENVIRONMENT", "API_PREFIX", "DEBUG", "LOG_LEVEL",
+        "CORS_ORIGINS", "DATABASE_POOL_SIZE",
+        "DATABASE_MAX_OVERFLOW", "UPSTREAM_TIMEOUT_SECONDS", "DEEPSEEK_BASE_URL",
+        "DEEPSEEK_MODEL", "DEEPSEEK_TIMEOUT_SECONDS")
+for key in keys:
+    if key not in os.environ:
+        invalid(key + " must be set in .env.prod")
+values = {key: os.environ[key] for key in keys}
+values.update({key: secrets[key] for key in ("DATABASE_URL", "DEEPSEEK_API_KEY")})
+postgres_values = {"POSTGRES_USER": "postgres", "POSTGRES_DB": "postgres",
+                   "POSTGRES_PASSWORD": admin_password,
+                   "POSTGRES_HOST_AUTH_METHOD": "scram-sha-256"}
+for key, value in (*values.items(), *postgres_values.items()):
+    if any(character in value for character in ("\r", "\n", "\x00")):
+        invalid(key + " must not contain newlines or NUL")
 quote = chr(39)
 def dotenv(values):
     return "".join(key + "=" + quote + value.replace(quote, chr(92) + quote)
