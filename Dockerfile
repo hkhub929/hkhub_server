@@ -4,8 +4,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 
 # Cache dependencies independently of application source; pyproject.toml is the source of truth.
-# Keep pip downloads in BuildKit even when the dependency layer needs rebuilding.
-# The cache mount is not copied into the runtime image.
+# Persist pip downloads across builds without including the cache in the runtime image.
 COPY pyproject.toml ./
 RUN --mount=type=cache,id=hkhub-server-pip,target=/root/.cache/pip,sharing=locked \
     python -c 'import subprocess, sys, tomllib; \

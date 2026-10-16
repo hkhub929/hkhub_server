@@ -34,6 +34,7 @@ export -n API_HOST_PORT SERVER_IMAGE SERVER_ENV_FILE POSTGRES_ENV_FILE
 [[ "$ENVIRONMENT" == production && "$DEBUG" == false ]] || fail 'Unsafe production runtime configuration.'
 for program in docker flock realpath python3; do command -v "$program" >/dev/null || fail "Missing program: $program"; done
 docker compose version >/dev/null
+docker buildx version </dev/null >/dev/null 2>&1 || fail 'Docker buildx is required. Install the buildx plugin on this host before deployment.'
 
 # Consume stdin before any Docker command can consume it. Values are never logged or sourced.
 SECRET_PAYLOAD=""
@@ -167,7 +168,7 @@ fi
 mkdir "$RELEASE_DIR"
 cp -a "$SOURCE_DIR/." "$RELEASE_DIR/"
 SERVER_IMAGE="$SERVER_IMAGE_NAME:$RELEASE_ID"
-# BuildKit persists the pip cache mount across releases; plain logs expose layer cache hits.
+# BuildKit retains dependency layers and the pip download cache across releases.
 DOCKER_BUILDKIT=1 docker build --progress=plain --file "$RELEASE_DIR/Dockerfile" --tag "$SERVER_IMAGE" "$RELEASE_DIR"
 # Pin the local content; deployment and rollback never need a registry.
 SERVER_IMAGE="$(docker image inspect --format '{{.Id}}' "$SERVER_IMAGE")"
