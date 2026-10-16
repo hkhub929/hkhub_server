@@ -3,9 +3,17 @@ FROM python:3.12-slim AS builder
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 
+# Cache dependencies independently of application source; pyproject.toml is the source of truth.
 COPY pyproject.toml ./
+RUN python -c 'import subprocess, sys, tomllib; \
+    config = tomllib.load(open("pyproject.toml", "rb")); \
+    pip = [sys.executable, "-m", "pip", "install", "--no-cache-dir"]; \
+    subprocess.check_call(pip + config["build-system"]["requires"]); \
+    subprocess.check_call(pip + ["--ignore-installed", "--prefix=/install"] + config["project"]["dependencies"])'
+
+# Build only the project wheel after source changes; do not download dependencies again.
 COPY app ./app
-RUN python -m pip install --no-cache-dir --prefix=/install .
+RUN python -m pip install --no-cache-dir --no-deps --no-build-isolation --prefix=/install .
 
 FROM python:3.12-slim AS runtime
 
@@ -16,11 +24,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN useradd --create-home --uid 10001 appuser
 COPY --from=builder /install /usr/local
 COPY app ./app
 COPY db/migrations ./db/migrations
 
-RUN useradd --create-home --uid 10001 appuser
+# Source archives may have owner-only modes from the deployment umask (077).
+# Keep files root-owned while allowing appuser to read code/dependencies and traverse directories.
+RUN chmod -R a+rX /app /usr/local
+
 USER appuser
 
 EXPOSE 8000
