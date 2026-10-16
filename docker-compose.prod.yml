@@ -1,4 +1,4 @@
-# Three independent containers in one Compose project and private default network.
+# API, unified background worker and PostgreSQL share a private default network.
 services:
   server:
     image: ${SERVER_IMAGE:?SERVER_IMAGE is required}
@@ -35,9 +35,9 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  commute-worker:
+  worker:
     image: ${SERVER_IMAGE:?SERVER_IMAGE is required}
-    command: ["python", "-m", "app.modules.commute.worker"]
+    command: ["python", "-m", "app.worker"]
     env_file:
       - ${SERVER_ENV_FILE:?SERVER_ENV_FILE is required}
     environment:
@@ -52,10 +52,14 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    stop_grace_period: 45s
-    # The image's HTTP healthcheck belongs to the API, not this background process.
+    stop_grace_period: 180s
+    # Check every supervised child, not just the container's main process.
     healthcheck:
-      disable: true
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
+      interval: 5s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
     logging:
       driver: json-file
       options:

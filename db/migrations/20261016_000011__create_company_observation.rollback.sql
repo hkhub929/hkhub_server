@@ -1,0 +1,10 @@
+DROP TABLE company_ai_usage;
+DROP TABLE company_analysis_batches;
+DROP TABLE company_worker_state;
+DROP TABLE company_liquidation_statistics;
+DROP TABLE company_topic_memberships;
+DROP TABLE company_report_topics;
+DROP TABLE company_report_companies;
+DROP TABLE company_period_reports;
+DROP TABLE company_source_records;
+DROP TABLE company_source_files;
