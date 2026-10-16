@@ -167,7 +167,8 @@ fi
 mkdir "$RELEASE_DIR"
 cp -a "$SOURCE_DIR/." "$RELEASE_DIR/"
 SERVER_IMAGE="$SERVER_IMAGE_NAME:$RELEASE_ID"
-docker build --file "$RELEASE_DIR/Dockerfile" --tag "$SERVER_IMAGE" "$RELEASE_DIR"
+# BuildKit persists the pip cache mount across releases; plain logs expose layer cache hits.
+DOCKER_BUILDKIT=1 docker build --progress=plain --file "$RELEASE_DIR/Dockerfile" --tag "$SERVER_IMAGE" "$RELEASE_DIR"
 # Pin the local content; deployment and rollback never need a registry.
 SERVER_IMAGE="$(docker image inspect --format '{{.Id}}' "$SERVER_IMAGE")"
 printf 'SERVER_IMAGE=%s\nSERVER_ENV_FILE=%s\nAPI_HOST_PORT=%s\nPOSTGRES_ENV_FILE=%s\n' \
